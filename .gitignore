@@ -1,0 +1,25 @@
+# Entornos de variables — NUNCA subir al repositorio
+.env.dev
+.env.qa
+.env.prd
+
+# Maven
+target/
+*.class
+*.jar
+*.war
+
+# IDE
+.idea/
+*.iml
+*.iws
+.mvn/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log

@@ -1,0 +1,2 @@
+org.springframework.context.ApplicationContextInitializer=\
+com.saasa.contingencias.config.DotenvInitializer

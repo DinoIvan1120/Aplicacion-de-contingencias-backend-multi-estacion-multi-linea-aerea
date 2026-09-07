@@ -1,0 +1,92 @@
+# ============================================================
+# deploy-prd.yml — CI/CD para el ambiente PRD
+# Trigger: push a la rama 'main'
+# Destino: EC2 PRD via SSH
+# ============================================================
+name: Deploy PRD
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-prd
+  cancel-in-progress: false  # En PRD NO cancelamos deploys en curso
+
+jobs:
+  build-and-deploy:
+    name: Test, Build & Deploy to EC2 PRD
+    runs-on: ubuntu-latest
+    environment: PRD  # Ambiente con aprobación manual recomendada en PRD
+
+    steps:
+      - name: Checkout código fuente
+        uses: actions/checkout@v4
+
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Ejecutar tests y verificar cobertura
+        run: mvn verify --no-transfer-progress
+
+      - name: Ejecutar tests, verificar cobertura y empaquetar JAR
+        run: mvn verify --no-transfer-progress
+
+      # ↓ SCP directo desde target/ — sin upload-artifact
+      - name: Configurar SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.PRD_EC2_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.PRD_EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Copiar JAR al EC2
+        run: |
+          scp -i ~/.ssh/id_rsa \
+            target/saasa-contingencias-backend-1.0.0.jar \
+            ${{ secrets.PRD_EC2_USER }}@${{ secrets.PRD_EC2_HOST }}:/opt/saasa/sgca/app.jar
+
+      - name: Generar .env.prd y reiniciar servicio
+        run: |
+          ssh -i ~/.ssh/id_rsa ${{ secrets.PRD_EC2_USER }}@${{ secrets.PRD_EC2_HOST }} << 'ENDSSH'
+            set -e
+            echo "=== Generando .env.prd ==="
+            cat > /opt/saasa/sgca/.env.prd << EOF
+          SPRING_PROFILES_ACTIVE=prd
+          DB_URL=${{ secrets.PRD_DB_URL }}
+          DB_USERNAME=${{ secrets.PRD_DB_USERNAME }}
+          DB_PASSWORD=${{ secrets.PRD_DB_PASSWORD }}
+          JWT_SECRET=${{ secrets.PRD_JWT_SECRET }}
+          JWT_EXPIRATION=${{ secrets.PRD_JWT_EXPIRATION }}
+          CORS_ALLOWED_ORIGIN=${{ secrets.PRD_CORS_ALLOWED_ORIGIN }}
+          MAIL_HOST=${{ secrets.PRD_MAIL_HOST }}
+          MAIL_PORT=${{ secrets.PRD_MAIL_PORT }}
+          MAIL_USERNAME=${{ secrets.PRD_MAIL_USERNAME }}
+          MAIL_PASSWORD=${{ secrets.PRD_MAIL_PASSWORD }}
+          MAIL_FROM=${{ secrets.PRD_MAIL_FROM }}
+          VERIFICATION_CODE_EXPIRATION_MINUTES=${{ secrets.PRD_VERIFICATION_CODE_EXPIRATION_MINUTES }}
+          AWS_ACCESS_KEY_ID=${{ secrets.PRD_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY=${{ secrets.PRD_AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION=${{ secrets.PRD_AWS_REGION }}
+          AWS_S3_BUCKET=${{ secrets.PRD_AWS_S3_BUCKET }}
+          AWS_S3_PREFIX=${{ secrets.PRD_AWS_S3_PREFIX }}
+          TWILIO_ACCOUNT_SID=${{ secrets.PRD_TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN=${{ secrets.PRD_TWILIO_AUTH_TOKEN }}
+          TWILIO_WHATSAPP_FROM=${{ secrets.PRD_TWILIO_WHATSAPP_FROM }}
+          EOF
+            chmod 600 /opt/saasa/sgca/.env.prd
+            echo "=== Reiniciando servicio sgca-prd ==="
+            sudo systemctl restart sgca-prd
+            echo "=== Esperando que el servicio levante ==="
+            sleep 15
+            echo "=== Estado del servicio ==="
+            sudo systemctl status sgca-prd --no-pager
+            echo "=== Deploy PRD completado exitosamente ==="
+          ENDSSH
+
+      - name: Limpiar SSH
+        if: always()
+        run: rm -f ~/.ssh/id_rsa

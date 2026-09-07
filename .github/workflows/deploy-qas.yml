@@ -1,0 +1,92 @@
+# ============================================================
+# deploy-qas.yml — CI/CD para el ambiente QAS
+# Trigger: push a la rama 'release'
+# Destino: EC2 QAS via SSH
+# ============================================================
+name: Deploy QAS
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-qas
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    name: Test, Build & Deploy to EC2 QAS
+    runs-on: ubuntu-latest
+    environment: QAS
+
+    steps:
+      - name: Checkout código fuente
+        uses: actions/checkout@v4
+
+      - name: Configurar Java 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Ejecutar tests y verificar cobertura
+        run: mvn verify --no-transfer-progress
+
+      - name: Ejecutar tests, verificar cobertura y empaquetar JAR)
+        run: mvn verify --no-transfer-progress
+
+      # ↓ SCP directo desde target/ — sin upload-artifact
+      - name: Configurar SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.QAS_EC2_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.QAS_EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Copiar JAR al EC2
+        run: |
+          scp -i ~/.ssh/id_rsa \
+            target/saasa-contingencias-backend-1.0.0.jar \
+            ${{ secrets.QAS_EC2_USER }}@${{ secrets.QAS_EC2_HOST }}:/opt/integrityflow/sgca/qas/app.jar
+
+      - name: Generar .env.qa y reiniciar servicio
+        run: |
+          ssh -i ~/.ssh/id_rsa ${{ secrets.QAS_EC2_USER }}@${{ secrets.QAS_EC2_HOST }} << 'ENDSSH'
+            set -e
+            echo "=== Generando .env.qa ==="
+            cat > /opt/integrityflow/sgca/qas/.env.qa << EOF
+          SPRING_PROFILES_ACTIVE=qa
+          DB_URL=${{ secrets.QAS_DB_URL }}
+          DB_USERNAME=${{ secrets.QAS_DB_USERNAME }}
+          DB_PASSWORD=${{ secrets.QAS_DB_PASSWORD }}
+          JWT_SECRET=${{ secrets.QAS_JWT_SECRET }}
+          JWT_EXPIRATION=${{ secrets.QAS_JWT_EXPIRATION }}
+          CORS_ALLOWED_ORIGIN=${{ secrets.QAS_CORS_ALLOWED_ORIGIN }}
+          MAIL_HOST=${{ secrets.QAS_MAIL_HOST }}
+          MAIL_PORT=${{ secrets.QAS_MAIL_PORT }}
+          MAIL_USERNAME=${{ secrets.QAS_MAIL_USERNAME }}
+          MAIL_PASSWORD=${{ secrets.QAS_MAIL_PASSWORD }}
+          MAIL_FROM=${{ secrets.QAS_MAIL_FROM }}
+          VERIFICATION_CODE_EXPIRATION_MINUTES=${{ secrets.QAS_VERIFICATION_CODE_EXPIRATION_MINUTES }}
+          AWS_ACCESS_KEY_ID=${{ secrets.QAS_AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY=${{ secrets.QAS_AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION=${{ secrets.QAS_AWS_REGION }}
+          AWS_S3_BUCKET=${{ secrets.QAS_AWS_S3_BUCKET }}
+          AWS_S3_PREFIX=${{ secrets.QAS_AWS_S3_PREFIX }}
+          TWILIO_ACCOUNT_SID=${{ secrets.QAS_TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN=${{ secrets.QAS_TWILIO_AUTH_TOKEN }}
+          TWILIO_WHATSAPP_FROM=${{ secrets.QAS_TWILIO_WHATSAPP_FROM }}
+          EOF
+            chmod 600 /opt/integrityflow/sgca/qas/.env.qa
+            echo "=== Reiniciando servicio sgca-qas ==="
+            sudo systemctl restart sgca-qas
+            echo "=== Esperando que el servicio levante ==="
+            sleep 15
+            echo "=== Estado del servicio ==="
+            sudo systemctl status sgca-qas --no-pager
+            echo "=== Deploy QAS completado exitosamente ==="
+          ENDSSH
+
+      - name: Limpiar SSH
+        if: always()
+        run: rm -f ~/.ssh/id_rsa

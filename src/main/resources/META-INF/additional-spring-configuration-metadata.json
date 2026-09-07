@@ -1,0 +1,49 @@
+{
+  "properties": [
+    {
+      "name": "aws.s3.bucket",
+      "type": "java.lang.String",
+      "description": "saasa-contingencias-pdfs"
+    },
+    {
+      "name": "aws.s3.prefix",
+      "type": "java.lang.String",
+      "description": "Prefijo de carpeta en S3 según entorno (dev/, qa/, prd/)"
+    },
+    {
+      "name": "aws.access-key-id",
+      "type": "java.lang.String",
+      "description": "Identificador del aws"
+    },
+    {
+      "name": "aws.secret-access-key",
+      "type": "java.lang.String",
+      "description": "Clave secreta del AWS"
+    },
+    {
+      "name": "aws.region",
+      "type": "java.lang.String",
+      "description": "us-east-2"
+    },
+    {
+      "name": "twilio.account-sid",
+      "type": "java.lang.String",
+      "description": "Twilio Account SID"
+    },
+    {
+      "name": "twilio.auth-token",
+      "type": "java.lang.String",
+      "description": "Twilio Auth Token"
+    },
+    {
+      "name": "twilio.whatsapp.from",
+      "type": "java.lang.String",
+      "description": "Número WhatsApp Twilio (formato whatsapp:+1XXXXXXXXXX)"
+    },
+    {
+      "name": "app.public-base-url",
+      "type": "java.lang.String",
+      "description": "Dominio público del backend, usado para el enlace corto del voucher /v/{correlativo} (sin '/' final)"
+    }
+  ]
+}
