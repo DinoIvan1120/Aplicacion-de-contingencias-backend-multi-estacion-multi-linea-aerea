@@ -25,6 +25,7 @@ import org.springframework.data.jpa.domain.Specification;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.saasa.contingencias.config.security.ContextoActivoHolder;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -75,7 +76,11 @@ public class UsuarioServiceImpl implements IUsuarioService {
      *     ("todas las líneas" si no selecciona ninguna).
      */
     private ScopeEstacionLinea contextoAdminActivo() {
-        if (estacionContext.esAdministradorGlobal()) return null;
+        if (estacionContext.esAdministradorGlobal()) {
+            Long estacionActiva = ContextoActivoHolder.getEstacionId();
+            if (estacionActiva == null) return null; // sin contexto activo → sin restricción
+            return new ScopeEstacionLinea(estacionActiva, ContextoActivoHolder.getLineaAereaId());
+        }
         return estacionContext.resolverContextoActivoLectura();
     }
 
