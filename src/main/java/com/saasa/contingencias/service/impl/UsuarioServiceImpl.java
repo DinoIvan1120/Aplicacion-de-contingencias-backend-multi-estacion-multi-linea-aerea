@@ -273,6 +273,16 @@ public class UsuarioServiceImpl implements IUsuarioService {
     @Override
     @Transactional
     public void quitarEstacion(Long usuarioId, Long relacionId) {
+        // Desvincular una estación+línea aérea es exclusivo del
+        // Administrador Global: un Administrador de Estación puede
+        // crear/editar/activar-desactivar usuarios dentro de su propio
+        // alcance, pero NO puede desvincular a ningún usuario (ni siquiera
+        // a sí mismo) de una relación estación+línea, sea cual sea el
+        // usuario objetivo.
+        if (!estacionContext.esAdministradorGlobal()) {
+            throw new AccesoDenegadoException(
+                    "Solo el Administrador Global puede desvincular a un usuario de una estación o línea aérea");
+        }
         getOrThrow(usuarioId);
         UsuarioEstacion relacion = usuarioEstacionRepository.findById(relacionId)
                 .filter(ue -> ue.getUsuario().getId().equals(usuarioId))

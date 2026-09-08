@@ -12,6 +12,7 @@ import com.saasa.contingencias.domain.mapping.UsuarioMapper;
 import com.saasa.contingencias.domain.model.Estacion;
 import com.saasa.contingencias.domain.model.LineaAerea;
 import com.saasa.contingencias.domain.model.Usuario;
+import com.saasa.contingencias.domain.model.UsuarioEstacion;
 import com.saasa.contingencias.domain.repository.EstacionLineaAereaRepository;
 import com.saasa.contingencias.domain.repository.EstacionRepository;
 import com.saasa.contingencias.domain.repository.LineaAereaRepository;
@@ -550,5 +551,60 @@ class UsuarioServiceImplTest {
         assertEquals(10L, captor.getValue().getEstacion().getId());
         assertNull(captor.getValue().getLineaAerea());
         verify(lineaAereaRepository, never()).findById(any());
+    }
+
+    @Test
+    void quitarEstacion_administradorDeEstacion_lanzaAccesoDenegado() {
+        when(estacionContext.esAdministradorGlobal()).thenReturn(false);
+
+        assertThrows(
+                AccesoDenegadoException.class,
+                () -> usuarioService.quitarEstacion(1L, 100L)
+        );
+
+        verify(usuarioRepository, never()).findById(any());
+        verify(usuarioEstacionRepository, never()).save(any());
+    }
+
+    @Test
+    void quitarEstacion_administradorDeEstacion_noPuedeDesvincularseASiMismo_lanzaAccesoDenegado() {
+        when(estacionContext.esAdministradorGlobal()).thenReturn(false);
+
+        assertThrows(
+                AccesoDenegadoException.class,
+                () -> usuarioService.quitarEstacion(usuarioExistente.getId(), 100L)
+        );
+
+        verify(usuarioEstacionRepository, never()).save(any());
+    }
+
+    @Test
+    void quitarEstacion_administradorGlobal_desvinculaCorrectamente() {
+        when(estacionContext.esAdministradorGlobal()).thenReturn(true);
+        when(usuarioRepository.findById(1L)).thenReturn(Optional.of(usuarioExistente));
+
+        Estacion lima = Estacion.builder()
+                .id(10L)
+                .nombre("Lima")
+                .codigoIata("LIM")
+                .estado(1)
+                .build();
+
+        UsuarioEstacion relacion = UsuarioEstacion.builder()
+                .id(100L)
+                .usuario(usuarioExistente)
+                .estacion(lima)
+                .estado(1)
+                .build();
+
+        when(usuarioEstacionRepository.findById(100L))
+                .thenReturn(Optional.of(relacion));
+        when(usuarioEstacionRepository.save(any()))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        assertDoesNotThrow(() -> usuarioService.quitarEstacion(1L, 100L));
+
+        assertEquals(0, relacion.getEstado());
+        verify(usuarioEstacionRepository).save(relacion);
     }
 }
