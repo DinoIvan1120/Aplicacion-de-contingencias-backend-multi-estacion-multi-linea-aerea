@@ -62,7 +62,7 @@ public class IconoModoServiceImpl implements IIconoModoService {
             return ClaveIconoModoEnum.valueOf(clave.toUpperCase()).name();
         } catch (IllegalArgumentException | NullPointerException e) {
             throw new BadRequestException(
-                    "Clave de ícono inválida: " + clave + " (valores válidos: GESTIONAR, OPERAR)");
+                    "Clave de ícono inválida: " + clave + " (valores válidos: GESTIONAR, OPERAR,USUARIOS)");
         }
     }
 }

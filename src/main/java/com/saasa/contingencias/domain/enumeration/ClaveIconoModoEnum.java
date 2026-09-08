@@ -6,5 +6,6 @@ package com.saasa.contingencias.domain.enumeration;
  */
 public enum ClaveIconoModoEnum {
     GESTIONAR,
-    OPERAR
+    OPERAR,
+    USUARIOS
 }
