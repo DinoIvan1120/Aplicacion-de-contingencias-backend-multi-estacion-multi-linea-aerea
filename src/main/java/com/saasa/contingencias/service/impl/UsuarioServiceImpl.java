@@ -148,16 +148,24 @@ public class UsuarioServiceImpl implements IUsuarioService {
         Usuario guardado = usuarioRepository.save(u);
 
         // Si quien crea NO es Administrador Global, el usuario nuevo queda
-        // auto-asignado a la(s) estación(es) del creador (sin línea fija:
-        // el creador puede refinarla después vía asignarEstacion).
-        List<Long> estacionesDelCreador = estacionContext.estacionesActuales();
-        if (!estacionesDelCreador.isEmpty()) {
-            for (Long estacionId : estacionesDelCreador) {
-                Estacion estacion = estacionRepository.findById(estacionId)
-                        .orElseThrow(() -> new RecursoNoEncontradoException("Estación no encontrada: " + estacionId));
-                usuarioEstacionRepository.save(UsuarioEstacion.builder()
-                        .usuario(guardado).estacion(estacion).estado(1).build());
+        // auto-asignado a la(s) estación(es) del creador. Si el creador
+        // tiene línea aérea fija en ese par (Administrador de Estación +
+        // Línea Aérea), el nuevo usuario hereda también esa línea; si el
+        // creador no tiene línea fija (Administrador de Estación sin
+        // restricción de línea), queda sin línea (= todas las líneas de
+        // esa estación), igual que antes.
+        List<ScopeEstacionLinea> scopesDelCreador = estacionContext.scopesActuales();
+        for (ScopeEstacionLinea scope : scopesDelCreador) {
+            Estacion estacion = estacionRepository.findById(scope.estacionId())
+                    .orElseThrow(() -> new RecursoNoEncontradoException("Estación no encontrada: " + scope.estacionId()));
+            LineaAerea lineaAerea = null;
+            if (scope.lineaAereaId() != null) {
+                lineaAerea = lineaAereaRepository.findById(scope.lineaAereaId())
+                        .orElseThrow(() -> new RecursoNoEncontradoException(
+                                "Línea aérea no encontrada: " + scope.lineaAereaId()));
             }
+            usuarioEstacionRepository.save(UsuarioEstacion.builder()
+                    .usuario(guardado).estacion(estacion).lineaAerea(lineaAerea).estado(1).build());
         }
 
         return usuarioMapper.toResponse(guardado);

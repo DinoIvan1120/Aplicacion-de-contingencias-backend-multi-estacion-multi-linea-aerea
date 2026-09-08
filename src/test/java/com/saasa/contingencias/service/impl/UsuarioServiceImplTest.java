@@ -479,4 +479,76 @@ class UsuarioServiceImplTest {
         assertThrows(BadRequestException.class, () -> usuarioService.asignarEstacion(1L, req));
         verify(usuarioEstacionRepository, never()).save(any());
     }
+
+    @Test
+    void create_administradorDeEstacionConLineaFija_heredaEstacionYLineaEnAutomatico() {
+        // Quien crea es Administrador de Lima+PlusUltra (línea fija) → el
+        // usuario nuevo debe quedar asignado automáticamente a esa misma
+        // estación Y esa misma línea aérea, sin paso manual adicional.
+        UsuarioRequest req = new UsuarioRequest(
+                "Carlos", "Ruiz", "carlos@saasa.com",
+                "DNI999", "EMP010", RolEnum.AGENTE_SAASA, "pass123");
+        when(usuarioRepository.existsByCorreo(any())).thenReturn(false);
+        when(usuarioRepository.existsByCodigoEmpleado(any())).thenReturn(false);
+        when(passwordEncoder.encode("pass123")).thenReturn("hashed");
+
+        Usuario nuevo = Usuario.builder().id(3L).nombre("Carlos").apellido("Ruiz")
+                .correo("carlos@saasa.com").codigoEmpleado("EMP010")
+                .rol(RolEnum.AGENTE_SAASA).passwordHash("hashed").estado(1).build();
+        when(usuarioRepository.save(any())).thenReturn(nuevo);
+        when(usuarioMapper.toResponse(nuevo)).thenReturn(
+                new UsuarioResponse(3L, "Carlos", "Ruiz", "carlos@saasa.com",
+                        "DNI999", "EMP010", "AGENTE_SAASA", 1, null));
+
+        Estacion lima = Estacion.builder().id(10L).nombre("Lima").codigoIata("LIM").estado(1).build();
+        LineaAerea plusUltra = LineaAerea.builder().id(5L).nombre("Plus Ultra").codigoIata("PUL").estado(1).build();
+        when(estacionContext.scopesActuales()).thenReturn(
+                List.of(new com.saasa.contingencias.config.security.ScopeEstacionLinea(10L, 5L)));
+        when(estacionRepository.findById(10L)).thenReturn(Optional.of(lima));
+        when(lineaAereaRepository.findById(5L)).thenReturn(Optional.of(plusUltra));
+
+        usuarioService.create(req);
+
+        org.mockito.ArgumentCaptor<com.saasa.contingencias.domain.model.UsuarioEstacion> captor =
+                org.mockito.ArgumentCaptor.forClass(com.saasa.contingencias.domain.model.UsuarioEstacion.class);
+        verify(usuarioEstacionRepository).save(captor.capture());
+        assertEquals(10L, captor.getValue().getEstacion().getId());
+        assertNotNull(captor.getValue().getLineaAerea());
+        assertEquals(5L, captor.getValue().getLineaAerea().getId());
+    }
+
+    @Test
+    void create_administradorDeEstacionSinLineaFija_heredaSoloLaEstacion() {
+        // Administrador de estación sin línea fija (ve todas las líneas de
+        // Lima) → el usuario nuevo hereda la estación, sin línea aérea
+        // (comportamiento previo, no debe romperse).
+        UsuarioRequest req = new UsuarioRequest(
+                "Marta", "Diaz", "marta@saasa.com",
+                "DNI998", "EMP011", RolEnum.AGENTE_SAASA, "pass123");
+        when(usuarioRepository.existsByCorreo(any())).thenReturn(false);
+        when(usuarioRepository.existsByCodigoEmpleado(any())).thenReturn(false);
+        when(passwordEncoder.encode("pass123")).thenReturn("hashed");
+
+        Usuario nuevo = Usuario.builder().id(4L).nombre("Marta").apellido("Diaz")
+                .correo("marta@saasa.com").codigoEmpleado("EMP011")
+                .rol(RolEnum.AGENTE_SAASA).passwordHash("hashed").estado(1).build();
+        when(usuarioRepository.save(any())).thenReturn(nuevo);
+        when(usuarioMapper.toResponse(nuevo)).thenReturn(
+                new UsuarioResponse(4L, "Marta", "Diaz", "marta@saasa.com",
+                        "DNI998", "EMP011", "AGENTE_SAASA", 1, null));
+
+        Estacion lima = Estacion.builder().id(10L).nombre("Lima").codigoIata("LIM").estado(1).build();
+        when(estacionContext.scopesActuales()).thenReturn(
+                List.of(new com.saasa.contingencias.config.security.ScopeEstacionLinea(10L, null)));
+        when(estacionRepository.findById(10L)).thenReturn(Optional.of(lima));
+
+        usuarioService.create(req);
+
+        org.mockito.ArgumentCaptor<com.saasa.contingencias.domain.model.UsuarioEstacion> captor =
+                org.mockito.ArgumentCaptor.forClass(com.saasa.contingencias.domain.model.UsuarioEstacion.class);
+        verify(usuarioEstacionRepository).save(captor.capture());
+        assertEquals(10L, captor.getValue().getEstacion().getId());
+        assertNull(captor.getValue().getLineaAerea());
+        verify(lineaAereaRepository, never()).findById(any());
+    }
 }
