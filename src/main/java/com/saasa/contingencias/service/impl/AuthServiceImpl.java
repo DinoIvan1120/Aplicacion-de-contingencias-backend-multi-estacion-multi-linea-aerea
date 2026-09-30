@@ -51,7 +51,7 @@ public class AuthServiceImpl implements IAuthService {
     /**
      * Login unificado que soporta dos modos:
      *  - correo + password  → todos los roles (flujo original)
-     *  - dni    + password  → solo AGENTE_SAASA (flujo nuevo)
+     *  - dni    + password  → AGENTE_SAASA y LIDER_SAASA (RolEnum#permiteLoginPorDni)
      *
      * Si llegan ambos campos se prioriza el correo para no romper clientes
      * existentes que ya envíen ambos por error.
@@ -63,9 +63,10 @@ public class AuthServiceImpl implements IAuthService {
         if (user.getEstado() == 0)
             throw new AccesoDenegadoException("Usuario inactivo");
 
-        // Solo AGENTE_SAASA puede iniciar sesión por DNI
-        if (esLoginPorDni(request) && user.getRol() != RolEnum.AGENTE_SAASA)
-            throw new AccesoDenegadoException("El login por DNI está disponible únicamente para el rol AGENTE_SAASA");
+        // Solo AGENTE_SAASA y LIDER_SAASA pueden iniciar sesión por DNI
+        if (esLoginPorDni(request) && !user.getRol().permiteLoginPorDni())
+            throw new AccesoDenegadoException(
+                    "El login por DNI está disponible únicamente para los roles AGENTE_SAASA y LIDER_SAASA");
 
         if (!passwordEncoder.matches(request.password(), user.getPasswordHash()))
             throw new BadRequestException("Credenciales inválidas");
@@ -138,9 +139,15 @@ public class AuthServiceImpl implements IAuthService {
         if(usuarioRepository.count()>0){
             verificarRolAdministrador();
         }
-        if (request.correo() != null && !request.correo().isBlank()
-                && usuarioRepository.existsByCorreo(request.correo()))
-            throw new BadRequestException("Ya existe un usuario con el correo: " + request.correo());
+        // Correo: obligatorio salvo para roles con login por DNI (AGENTE_SAASA, LIDER_SAASA)
+        String correo = normalizarCorreo(request.correo());
+        if (correo == null && !request.rol().permiteLoginPorDni())
+            throw new BadRequestException("El correo es obligatorio para el rol " + request.rol().name());
+        if (correo != null && usuarioRepository.existsByCorreo(correo))
+            throw new BadRequestException("Ya existe un usuario con el correo: " + correo);
+        // Si el rol entra por DNI, el documento debe ser único para que el login no sea ambiguo
+        if (request.rol().permiteLoginPorDni() && usuarioRepository.existsByDocumento(request.documento()))
+            throw new BadRequestException("Ya existe un usuario con el documento: " + request.documento());
         if (usuarioRepository.existsByCodigoEmpleado(request.codigoEmpleado()))
             throw new BadRequestException("Ya existe un usuario con el código de empleado: " + request.codigoEmpleado());
         if (request.password() == null || request.password().isBlank())
@@ -149,7 +156,7 @@ public class AuthServiceImpl implements IAuthService {
         Usuario u = Usuario.builder()
                 .nombre(request.nombre())
                 .apellido(request.apellido())
-                .correo(request.correo())
+                .correo(correo)
                 .documento(request.documento())
                 .codigoEmpleado(request.codigoEmpleado())
                 .rol(request.rol())
@@ -166,12 +173,12 @@ public class AuthServiceImpl implements IAuthService {
     /**
      * Inicia el flujo de recuperación de contraseña.
      *
-     * Flujo B — por correo (autónomo, agente con correo o cualquier otro rol):
+     * Flujo B — por correo (autónomo, agente/líder con correo o cualquier otro rol):
      *   - Si llega `correo`: busca por correo, envía código al correo (comportamiento original).
      *   - Si llega `dni`:    busca por documento.
-     *     · Si el agente tiene correo → envía el código al correo (mismo mecanismo).
-     *     · Si no tiene correo        → lanza excepción con mensaje orientativo
-     *       para que el agente contacte al administrador (Flujo A).
+     *     · Si el agente/líder tiene correo → envía el código al correo (mismo mecanismo).
+     *     · Si no tiene correo              → no envía nada; el frontend consulta
+     *       /forgot-password/tiene-correo y le indica contactar al administrador (Flujo A).
      *
      * Siempre responde HTTP 200 para no revelar existencia del usuario.
      */
@@ -185,7 +192,7 @@ public class AuthServiceImpl implements IAuthService {
             throw new BadRequestException("Debes proporcionar un correo o un documento para recuperar tu contraseña");
 
         if (porDni) {
-            // Flujo por DNI (AGENTE_SAASA)
+            // Flujo por DNI (AGENTE_SAASA / LIDER_SAASA)
             usuarioRepository.findByDocumento(request.dni()).ifPresent(user -> {
                 if (user.getCorreo() != null && !user.getCorreo().isBlank()) {
                     // Tiene correo → envía código igual que el flujo estándar
@@ -204,7 +211,7 @@ public class AuthServiceImpl implements IAuthService {
 
     /**
      * Endpoint auxiliar (Flujo B / sin correo):
-     * Indica si el agente con el DNI dado tiene correo registrado.
+     * Indica si el usuario (agente o líder) con el DNI dado tiene correo registrado.
      * Permite que el frontend muestre el mensaje correcto sin exponer datos sensibles.
      *
      * Respuestas:
@@ -256,7 +263,7 @@ public class AuthServiceImpl implements IAuthService {
         user.setPasswordHash(passwordEncoder.encode(request.nuevaPassword()));
         usuarioRepository.save(user);
 
-        // Confirmación por correo solo si el agente tiene correo registrado
+        // Confirmación por correo solo si el usuario tiene correo registrado
         if (user.getCorreo() != null && !user.getCorreo().isBlank()) {
             emailService.enviarConfirmacionReset(user.getCorreo(), user.getNombre(), request.nuevaPassword());
         }
@@ -302,7 +309,7 @@ public class AuthServiceImpl implements IAuthService {
 
     /**
      * Resuelve el usuario desde el subject del JWT.
-     * El subject puede ser un correo (rol con correo) o un documento (agente sin correo).
+     * El subject puede ser un correo (rol con correo) o un documento (agente/líder sin correo).
      */
     private Usuario buscarPorSubject(String subject) {
         // Intenta primero por correo; si no encuentra, intenta por documento
@@ -328,7 +335,7 @@ public class AuthServiceImpl implements IAuthService {
 
     /**
      * Obtiene el código de verificación vigente para el usuario.
-     * Busca por correo si existe, por id si no (agente sin correo).
+     * Busca por correo si existe, por id si no (agente/líder sin correo).
      */
     private CodigoVerificacion obtenerCodigoValido(Usuario user) {
         if (user.getCorreo() != null && !user.getCorreo().isBlank()) {
@@ -341,6 +348,11 @@ public class AuthServiceImpl implements IAuthService {
                 .orElseThrow(() -> new BadRequestException("Código inválido o expirado"));
     }
 
+    /** Convierte correo vacío/blanco en null (la columna es UNIQUE: dos "" chocarían). */
+    private String normalizarCorreo(String correo) {
+        return (correo != null && !correo.isBlank()) ? correo.trim() : null;
+    }
+
     private UsuarioResponse toUsuarioResponse(Usuario u) {
         return new UsuarioResponse(
                 u.getId(), u.getNombre(), u.getApellido(), u.getCorreo(),
@@ -349,4 +361,3 @@ public class AuthServiceImpl implements IAuthService {
         );
     }
 }
-

@@ -132,16 +132,21 @@ public class UsuarioServiceImpl implements IUsuarioService {
     @Override
     @Transactional
     public UsuarioResponse create(UsuarioRequest request) {
-        if (request.correo() != null && !request.correo().isBlank()
-                && usuarioRepository.existsByCorreo(request.correo()))
+        // Correo: obligatorio salvo para roles con login por DNI (AGENTE_SAASA, LIDER_SAASA)
+        String correo = normalizarCorreo(request.correo());
+        validarCorreoSegunRol(correo, request.rol());
+        if (correo != null && usuarioRepository.existsByCorreo(correo))
             throw new BadRequestException("Ya existe un usuario con ese correo");
+        // Si el rol entra por DNI, el documento debe ser único para que el login no sea ambiguo
+        if (request.rol().permiteLoginPorDni() && usuarioRepository.existsByDocumento(request.documento()))
+            throw new BadRequestException("Ya existe un usuario con el documento: " + request.documento());
         if (usuarioRepository.existsByCodigoEmpleado(request.codigoEmpleado()))
             throw new BadRequestException("Ya existe un usuario con ese código de empleado");
         if (request.password() == null || request.password().isBlank())
             throw new BadRequestException("La contraseña es obligatoria al crear un usuario");
         Usuario u = Usuario.builder()
                 .nombre(request.nombre()).apellido(request.apellido())
-                .correo(request.correo()).documento(request.documento())
+                .correo(correo).documento(request.documento())
                 .codigoEmpleado(request.codigoEmpleado()).rol(request.rol())
                 .passwordHash(passwordEncoder.encode(request.password()))
                 .estado(1).build();
@@ -175,12 +180,15 @@ public class UsuarioServiceImpl implements IUsuarioService {
     @Transactional
     public UsuarioResponse update(Long id, UsuarioRequest request) {
         Usuario u = getOrThrow(id);
-        // Correo: obligatorio para no-agentes, opcional para AGENTE_SAASA
-        String correoNuevo = (request.correo() != null && !request.correo().isBlank())
-                ? request.correo() : null;
+        // Correo: obligatorio salvo para roles con login por DNI (AGENTE_SAASA, LIDER_SAASA)
+        String correoNuevo = normalizarCorreo(request.correo());
+        validarCorreoSegunRol(correoNuevo, request.rol());
 
-        if (correoNuevo == null && request.rol() != RolEnum.AGENTE_SAASA)
-            throw new BadRequestException("El correo es obligatorio para el rol " + request.rol().name());
+        // Documento único para roles con login por DNI (solo si cambió)
+        if (request.rol().permiteLoginPorDni()
+                && !request.documento().equals(u.getDocumento())
+                && usuarioRepository.existsByDocumento(request.documento()))
+            throw new BadRequestException("Ya existe un usuario con el documento: " + request.documento());
 
         // Unicidad: solo si el correo cambió y no es null
         if (correoNuevo != null && !correoNuevo.equals(u.getCorreo())
@@ -290,6 +298,19 @@ public class UsuarioServiceImpl implements IUsuarioService {
                         "El usuario " + usuarioId + " no tiene una relación de estación con id " + relacionId));
         relacion.setEstado(0);
         usuarioEstacionRepository.save(relacion);
+    }
+
+    // ─── Helpers de validación de correo ──────────────────────────────────────
+
+    /** Convierte correo vacío/blanco en null (la columna es UNIQUE: dos "" chocarían). */
+    private String normalizarCorreo(String correo) {
+        return (correo != null && !correo.isBlank()) ? correo.trim() : null;
+    }
+
+    /** El correo solo es opcional para los roles que pueden entrar por DNI. */
+    private void validarCorreoSegunRol(String correo, RolEnum rol) {
+        if (correo == null && !rol.permiteLoginPorDni())
+            throw new BadRequestException("El correo es obligatorio para el rol " + rol.name());
     }
 
     private UsuarioEstacionResponse toUsuarioEstacionResponse(UsuarioEstacion ue) {
