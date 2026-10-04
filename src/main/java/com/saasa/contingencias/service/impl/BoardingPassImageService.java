@@ -44,6 +44,11 @@ public class BoardingPassImageService {
 
     private final BoardingPassServiceImpl boardingPassService;
 
+    /** Lado mayor máximo (px) con el que se procesa la imagen. */
+    private static final int MAX_LADO_PX = 2500;
+    /** Solo se amplía x2 si la imagen es pequeña; ampliar una foto grande no aporta nitidez. */
+    private static final int LADO_MIN_PARA_ESCALAR_PX = 1600;
+
     /**
      * Procesa una imagen de boarding pass y extrae el código de barras IATA.
      *
@@ -95,6 +100,11 @@ public class BoardingPassImageService {
             // ═══════════════════════════════════════════════════════════════════════
             // Detección de código de barras
             // ═══════════════════════════════════════════════════════════════════════
+
+            // Limitar el lado mayor: fotos de 12+ MP vuelven lentas las estrategias
+            // y al escalar x2 pueden agotar memoria (reducir NO pierde legibilidad
+            // del PDF417 mientras quede por encima de ~2000 px).
+            bufferedImage = limitarTamano(bufferedImage, MAX_LADO_PX);
 
             String codigoBarras = detectarConMultiplesEstrategias(bufferedImage);
 
@@ -171,7 +181,7 @@ public class BoardingPassImageService {
 
         // ── Estrategia 4: Imagen escalada al doble ──
         log.info("🔍 Estrategia 4: imagen escalada x2");
-        BufferedImage escalada = escalarImagen(imagen, 2.0);
+        BufferedImage escalada = escalarSiEsPequena(imagen);
         result = intentarLeer(escalada, false, false, formatos);
         if (result != null) return result;
 
@@ -201,7 +211,7 @@ public class BoardingPassImageService {
 
         // ── Estrategia 7: Crop mitad inferior escalada + grises ──
         log.info("🔍 Estrategia 7: crop inferior + escala x2 + grises");
-        BufferedImage cropEscalado = escalarImagen(mitadInferior, 2.0);
+        BufferedImage cropEscalado = escalarSiEsPequena(mitadInferior);
         result = intentarLeer(cropEscalado, false, false, formatos);
         if (result != null) return result;
 
@@ -221,7 +231,7 @@ public class BoardingPassImageService {
         result = intentarLeer(tercioInferior, false, false, formatos);
         if (result != null) return result;
 
-        result = intentarLeer(escalarImagen(tercioInferior, 2.0), false, false, formatos);
+        result = intentarLeer(escalarSiEsPequena(tercioInferior), false, false, formatos);
         if (result != null) return result;
 
         result = intentarLeer(convertirAGrisAltoContraste(tercioInferior), false, false, formatos);
@@ -235,13 +245,56 @@ public class BoardingPassImageService {
 
         result = intentarLeer(invertida, false, true, formatos);
         if (result != null) return result;
+        // ── Estrategia 10: rotaciones 90°/270°/180° ──
+        // ImageIO ignora la orientación EXIF: una foto tomada en vertical puede
+        // llegar girada y el PDF417 no se decodifica rotado 90°.
+        for (int grados : new int[]{90, 270, 180}) {
+            log.info("🔍 Estrategia 10: imagen rotada {}°", grados);
+            BufferedImage rotada = rotarImagen(imagen, grados);
+            result = intentarLeer(rotada, false, false, formatos);
+            if (result != null) return result;
 
+            result = intentarLeer(rotada, false, true, formatos);
+            if (result != null) return result;
 
-
+            result = intentarLeer(convertirAGrisAltoContraste(rotada), false, false, formatos);
+            if (result != null) return result;
+        }
 
 
         log.warn("⚠️ Ninguna estrategia detectó el código de barras");
         return null;
+    }
+
+    /** Reduce (nunca amplía) la imagen para que su lado mayor no supere maxLado. */
+    private BufferedImage limitarTamano(BufferedImage original, int maxLado) {
+        int w = original.getWidth();
+        int h = original.getHeight();
+        int mayor = Math.max(w, h);
+        if (mayor <= maxLado) return original;
+        return escalarImagen(original, (double) maxLado / mayor);
+    }
+
+    /** Amplía x2 solo si la imagen es pequeña (lado mayor < LADO_MIN_PARA_ESCALAR_PX). */
+    private BufferedImage escalarSiEsPequena(BufferedImage original) {
+        int mayor = Math.max(original.getWidth(), original.getHeight());
+        return mayor < LADO_MIN_PARA_ESCALAR_PX ? escalarImagen(original, 2.0) : original;
+    }
+
+    /** Rota la imagen 90, 180 o 270 grados. */
+    private BufferedImage rotarImagen(BufferedImage original, int grados) {
+        int w = original.getWidth();
+        int h = original.getHeight();
+        boolean intercambia = grados == 90 || grados == 270;
+        BufferedImage rotada = new BufferedImage(
+                intercambia ? h : w, intercambia ? w : h, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g2d = rotada.createGraphics();
+        g2d.translate(rotada.getWidth() / 2.0, rotada.getHeight() / 2.0);
+        g2d.rotate(Math.toRadians(grados));
+        g2d.translate(-w / 2.0, -h / 2.0);
+        g2d.drawImage(original, 0, 0, null);
+        g2d.dispose();
+        return rotada;
     }
 
     /**
