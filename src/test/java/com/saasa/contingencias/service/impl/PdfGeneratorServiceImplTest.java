@@ -359,11 +359,11 @@ class PdfGeneratorServiceImplTest {
     // ══════════════════════════════════════════════════════════════════════
 
     @Test
-    @DisplayName("Vuelo con aerolínea SIN logo cargado → cae al header de texto, PDF válido")
-    void generarVoucher_aerolineaSinLogo_usaEncabezadoDeTextoYGeneraPdfValido() {
+    @DisplayName("Vuelo con aerolínea SIN logo cargado → encabezado en blanco, PDF válido")
+    void generarVoucher_aerolineaSinLogo_encabezadoEnBlancoYGeneraPdfValido() {
         // "LATAM" no tiene logo cargado en el classpath (solo Plus Ultra lo
-        // tiene) → agregarHeaderAerolinea() debe caer al header de texto de
-        // siempre en vez de intentar cargar una imagen, sin lanzar excepción.
+        // tiene) → agregarHeaderAerolinea() no escribe nada (ni imagen ni
+        // texto) y no debe lanzar excepción.
         Vuelo v = vuelo("LATAM");
         Atencion a = atencion(v, LocalDate.of(2026, 7, 20));
 
@@ -374,8 +374,8 @@ class PdfGeneratorServiceImplTest {
     }
 
     @Test
-    @DisplayName("Voucher GRUPAL con aerolínea SIN logo cargado → cae al header de texto, PDF válido")
-    void generarVoucherGrupal_aerolineaSinLogo_usaEncabezadoDeTextoYGeneraPdfValido() {
+    @DisplayName("Voucher GRUPAL con aerolínea SIN logo cargado → encabezado en blanco, PDF válido")
+    void generarVoucherGrupal_aerolineaSinLogo_encabezadoEnBlancoYGeneraPdfValido(){
         Vuelo v = vuelo("LATAM");
         Atencion titular = atencionGrupo(v, 1L, "SGC-000000001", "Juan", "Perez");
         Atencion acompanante = atencionGrupo(v, 2L, "SGC-000000002", "Flor", "Vasquez");
@@ -476,8 +476,8 @@ class PdfGeneratorServiceImplTest {
     }
 
     @Test
-    @DisplayName("Línea aérea sin logoKey subido aún → no llama a S3 y cae al header de texto")
-    void generarVoucher_lineaAereaSinLogoKey_noLlamaS3YCaeATexto() {
+    @DisplayName("Línea aérea sin logoKey (nunca subido o eliminado) → no llama a S3 y deja el encabezado en blanco")
+    void generarVoucher_lineaAereaSinLogoKey_noLlamaS3YEncabezadoEnBlanco() {
         LineaAereaRepository lineaAereaRepository = mock(LineaAereaRepository.class);
         IS3StorageService s3StorageService = mock(IS3StorageService.class);
         PdfGeneratorServiceImpl service = new PdfGeneratorServiceImpl(lineaAereaRepository, s3StorageService);

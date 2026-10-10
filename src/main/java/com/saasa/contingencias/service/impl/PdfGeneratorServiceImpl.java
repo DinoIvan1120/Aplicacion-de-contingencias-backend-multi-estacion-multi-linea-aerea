@@ -120,8 +120,8 @@ public class PdfGeneratorServiceImpl implements IPdfGeneratorService {
      * Agrega el header del voucher con el logo oficial de la aerolínea
      * correspondiente a la estación/línea aérea del vuelo. El logo se
      * resuelve dinámicamente vía lineaAereaId (LineaAerea.logoKey en S3);
-     * si esa aerolínea aún no tiene logo cargado, cae al header de texto
-     * de siempre (nombre en rojo + "LÍNEAS AÉREAS"). Se mantiene la misma
+     * si esa aerolínea no tiene logo (nunca subido o eliminado), el
+     * encabezado queda en blanco: NO se escribe ningún texto. Se mantiene la misma
      * posición y el mismo tamaño (140x180) que tenía el logo estático de
      * Plus Ultra, solo cambia de dónde sale la imagen.
      */
@@ -139,14 +139,9 @@ public class PdfGeneratorServiceImpl implements IPdfGeneratorService {
             Image logo = new Image(ImageDataFactory.create(logoBytes));
             logo.scaleToFit(140, 180);
             doc.add(logo);
-        } else {
-            doc.add(new Paragraph()
-                    .add(new Text(nombreAerolinea.toUpperCase() + "\n")
-                            .setFontSize(24).setBold().setFontColor(COLOR_ROJO_PLUS_ULTRA))
-                    .add(new Text("LÍNEAS AÉREAS")
-                            .setFontSize(10).setFontColor(COLOR_GRIS_OSCURO))
-                    .setTextAlignment(TextAlignment.LEFT));
         }
+        // Sin logo: encabezado en blanco (sin texto). Si se vuelve a subir
+        // un logo, subirLogo() invalida el caché y reaparece automáticamente.
     }
 
     /**
