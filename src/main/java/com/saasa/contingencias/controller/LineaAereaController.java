@@ -73,6 +73,17 @@ public class LineaAereaController {
     }
 
     /**
+     * Elimina el logo de la línea aérea. Solo ADMINISTRADOR GLOBAL: el
+     * catálogo de líneas aéreas es compartido por todas las estaciones,
+     * así que quitar el logo afecta a todas (UI y vouchers/PDF).
+     */
+    @DeleteMapping("/{id}/logo")
+    @PreAuthorize("hasRole('ADMINISTRADOR') and @estacionContext.esAdministradorGlobal()")
+    public ResponseEntity<ApiResponse<LineaAereaResponse>> eliminarLogo(@PathVariable Long id) {
+        return ResponseEntity.ok(ApiResponse.success("Logo eliminado", lineaAereaService.eliminarLogo(id)));
+    }
+
+    /**
      * URL firmada temporal (15 min) para mostrar el logo en el frontend.
      * Abierta a cualquier usuario autenticado, igual que findAll/findById —
      * es solo lectura de un asset visual, no información sensible.

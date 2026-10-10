@@ -11,6 +11,8 @@ import com.saasa.contingencias.service.ILineaAereaService;
 import com.saasa.contingencias.service.IPdfGeneratorService;
 import com.saasa.contingencias.service.IS3StorageService;
 import org.springframework.stereotype.Service;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
@@ -23,6 +25,7 @@ import java.util.List;
 @Service
 public class LineaAereaServiceImpl implements ILineaAereaService {
 
+    private static final Logger log = LoggerFactory.getLogger(LineaAereaServiceImpl.class);
     private final LineaAereaRepository lineaAereaRepository;
     private final LineaAereaMapper lineaAereaMapper;
     private final IS3StorageService s3StorageService;
@@ -107,6 +110,35 @@ public class LineaAereaServiceImpl implements ILineaAereaService {
         // PdfGeneratorServiceImpl. Lo invalidamos para que el próximo
         // voucher/PDF descargue la versión recién subida.
         pdfGeneratorService.invalidarCacheLogo(id);
+
+        return response;
+    }
+
+    @Override
+    @Transactional
+    public LineaAereaResponse eliminarLogo(Long id) {
+        LineaAerea lineaAerea = obtenerLineaAerea(id);
+
+        String logoKey = lineaAerea.getLogoKey();
+        if (logoKey == null || logoKey.isBlank()) {
+            // Idempotente: nada que borrar.
+            return lineaAereaMapper.toResponse(lineaAerea);
+        }
+
+        // Primero se limpia la referencia en BD y se invalida el caché del
+        // PDF; así, aunque falle el borrado en S3, el sistema ya no usa el logo.
+        lineaAerea.setLogoKey(null);
+        LineaAereaResponse response = lineaAereaMapper.toResponse(lineaAereaRepository.save(lineaAerea));
+        pdfGeneratorService.invalidarCacheLogo(id);
+
+        // Un objeto huérfano en S3 es inofensivo (el próximo upload lo
+        // sobrescribe, misma key logos/{codigoIata}.png), por eso un fallo
+        // aquí no debe revertir la transacción.
+        try {
+            s3StorageService.eliminarPdf(logoKey);
+        } catch (RuntimeException e) {
+            log.warn("⚠️ No se pudo eliminar el logo en S3 ({}): {}", logoKey, e.getMessage());
+        }
 
         return response;
     }

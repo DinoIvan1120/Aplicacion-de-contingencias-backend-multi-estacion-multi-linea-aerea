@@ -15,6 +15,13 @@ public interface ILineaAereaService {
     LineaAereaResponse subirLogo(Long id, byte[] logoBytes, String contentType);
 
     /**
+     * Elimina el logo de la aerolínea: borra el objeto en S3, limpia
+     * logoKey y invalida el caché de logos del generador de PDF.
+     * Idempotente: si la aerolínea no tiene logo, no hace nada.
+     */
+    LineaAereaResponse eliminarLogo(Long id);
+
+    /**
      * URL firmada temporal (15 min) para mostrar el logo de la aerolínea.
      * Null si la aerolínea aún no tiene logo cargado.
      */

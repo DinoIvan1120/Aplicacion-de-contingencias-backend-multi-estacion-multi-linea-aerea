@@ -165,4 +165,58 @@ class LineaAereaServiceImplTest {
         assertNull(url);
         verifyNoInteractions(s3StorageService);
     }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // eliminarLogo
+    // ══════════════════════════════════════════════════════════════════════
+
+    @Test
+    void eliminarLogo_conLogo_limpiaKeyBorraEnS3EInvalidaCache() {
+        plusUltra.setLogoKey("contingencias/logos/PUL.png");
+        when(lineaAereaRepository.findById(1L)).thenReturn(Optional.of(plusUltra));
+        when(lineaAereaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(lineaAereaMapper.toResponse(any()))
+                .thenReturn(new LineaAereaResponse(1L, "PUL", "Plus Ultra", 1, null, null));
+
+        LineaAereaResponse resp = lineaAereaService.eliminarLogo(1L);
+
+        assertNull(resp.logoKey());
+        assertNull(plusUltra.getLogoKey());
+        verify(s3StorageService).eliminarPdf("contingencias/logos/PUL.png");
+        verify(pdfGeneratorService).invalidarCacheLogo(1L);
+    }
+
+    @Test
+    void eliminarLogo_sinLogo_esIdempotenteYNoTocaS3() {
+        when(lineaAereaRepository.findById(1L)).thenReturn(Optional.of(plusUltra));
+        when(lineaAereaMapper.toResponse(plusUltra))
+                .thenReturn(new LineaAereaResponse(1L, "PUL", "Plus Ultra", 1, null, null));
+
+        lineaAereaService.eliminarLogo(1L);
+
+        verify(lineaAereaRepository, never()).save(any());
+        verifyNoInteractions(s3StorageService);
+        verifyNoInteractions(pdfGeneratorService);
+    }
+
+    @Test
+    void eliminarLogo_falloS3_noRevierteLaLimpiezaDeLaKey() {
+        plusUltra.setLogoKey("contingencias/logos/PUL.png");
+        when(lineaAereaRepository.findById(1L)).thenReturn(Optional.of(plusUltra));
+        when(lineaAereaRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(lineaAereaMapper.toResponse(any()))
+                .thenReturn(new LineaAereaResponse(1L, "PUL", "Plus Ultra", 1, null, null));
+        doThrow(new RuntimeException("S3 caído")).when(s3StorageService).eliminarPdf(any());
+
+        assertDoesNotThrow(() -> lineaAereaService.eliminarLogo(1L));
+        assertNull(plusUltra.getLogoKey());
+    }
+
+    @Test
+    void eliminarLogo_noExiste_lanzaRecursoNoEncontrado() {
+        when(lineaAereaRepository.findById(99L)).thenReturn(Optional.empty());
+        assertThrows(RecursoNoEncontradoException.class, () -> lineaAereaService.eliminarLogo(99L));
+        verifyNoInteractions(s3StorageService);
+        verifyNoInteractions(pdfGeneratorService);
+    }
 }
