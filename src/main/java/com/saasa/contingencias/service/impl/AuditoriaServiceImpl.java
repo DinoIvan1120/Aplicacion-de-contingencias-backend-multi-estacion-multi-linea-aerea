@@ -21,6 +21,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
+import com.saasa.contingencias.util.DateTimeUtil;
 
 import java.io.ByteArrayOutputStream;
 import java.time.LocalDate;
@@ -266,7 +267,7 @@ public class AuditoriaServiceImpl implements IAuditoriaService {
             Row metaRow = sheet.createRow(0);
             CellStyle metaStyle = createMetaStyle(wb);
             String meta = String.format("Generado: %s | Total registros: %d",
-                    LocalDateTime.now().format(FMT), registros.size());
+                    DateTimeUtil.ahoraEnLima().format(FMT), registros.size());
             Cell metaCell = metaRow.createCell(0);
             metaCell.setCellValue(meta);
             metaCell.setCellStyle(metaStyle);

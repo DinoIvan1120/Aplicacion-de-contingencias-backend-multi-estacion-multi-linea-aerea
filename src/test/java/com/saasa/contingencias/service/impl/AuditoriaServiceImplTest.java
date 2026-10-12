@@ -34,6 +34,14 @@ import jakarta.persistence.criteria.Expression;
 import jakarta.persistence.criteria.Path;
 import jakarta.persistence.criteria.Root;
 
+import com.saasa.contingencias.util.DateTimeUtil;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import java.io.ByteArrayInputStream;
+import java.time.Duration;
+import java.time.format.DateTimeFormatter;
+import java.util.TimeZone;
+
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -466,5 +474,33 @@ class AuditoriaServiceImplTest {
         assertNotNull(xlsx);
         assertEquals('P', xlsx[0]);
         assertEquals('K', xlsx[1]);
+    }
+
+    @Test
+    @DisplayName("exportarExcel — la cabecera 'Generado' usa hora de Lima aunque el servidor esté en UTC")
+    void exportarExcel_cabeceraGeneradoUsaHoraDeLima() throws Exception {
+        TimeZone original = TimeZone.getDefault();
+        TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
+        try {
+            when(estacionContext.resolverContextoActivoLectura()).thenReturn(new ScopeEstacionLinea(1L, 1L));
+            when(auditoriaRepository.findAll(any(Specification.class), any(Pageable.class)))
+                    .thenReturn(new PageImpl<>(List.of()));
+
+            byte[] xlsx = service.exportarExcel(null, null, null, null, null, null);
+
+            try (Workbook wb = new XSSFWorkbook(new ByteArrayInputStream(xlsx))) {
+                String meta = wb.getSheetAt(0).getRow(0).getCell(0).getStringCellValue();
+                String fechaTxt = meta.substring("Generado: ".length(), "Generado: ".length() + 19);
+                LocalDateTime generado = LocalDateTime.parse(
+                        fechaTxt, DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss"));
+
+                long diferenciaSeg = Math.abs(
+                        Duration.between(generado, DateTimeUtil.ahoraEnLima()).getSeconds());
+                assertTrue(diferenciaSeg < 60,
+                        "La cabecera debe estar en hora de Lima, pero decía: " + fechaTxt);
+            }
+        } finally {
+            TimeZone.setDefault(original);
+        }
     }
 }

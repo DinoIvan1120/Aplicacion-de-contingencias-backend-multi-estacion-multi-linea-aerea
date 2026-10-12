@@ -16,6 +16,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import com.saasa.contingencias.util.DateTimeUtil;
+
 import java.time.LocalDate;
 
 /**
@@ -178,7 +180,7 @@ public class AuditoriaController {
         byte[] excel = auditoriaService.exportarExcel(
                 buscar, usuarioId, modulo, accion, fechaDesde, fechaHasta);
 
-        String filename = "auditoria-" + LocalDate.now() + ".xlsx";
+        String filename = "auditoria-" + DateTimeUtil.hoyEnLima() + ".xlsx";
 
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION,
