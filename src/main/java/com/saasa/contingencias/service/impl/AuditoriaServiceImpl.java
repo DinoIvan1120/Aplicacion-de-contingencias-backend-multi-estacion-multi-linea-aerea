@@ -361,8 +361,13 @@ public class AuditoriaServiceImpl implements IAuditoriaService {
         return scopeSpec().and((root, query, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
 
-            if (usuarioId != null)
-                predicates.add(cb.equal(root.get("usuario").get("id"), usuarioId));
+            if (usuarioId != null){
+                // usuarioId = 0 es la opción "Sistema" del filtro: acciones sin usuario
+                if (usuarioId == 0L)
+                    predicates.add(cb.isNull(root.get("usuario")));
+                else
+                    predicates.add(cb.equal(root.get("usuario").get("id"), usuarioId));
+            }
             if (modulo != null && !modulo.isBlank())
                 predicates.add(cb.equal(cb.upper(root.get("modulo")), modulo.toUpperCase()));
             if (accion != null && !accion.isBlank())

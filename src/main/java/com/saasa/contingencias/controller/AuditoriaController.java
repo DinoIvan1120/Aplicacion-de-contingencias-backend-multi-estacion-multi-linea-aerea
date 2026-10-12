@@ -9,6 +9,7 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.data.domain.*;
 import org.springframework.data.web.PageableDefault;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -40,27 +41,45 @@ public class AuditoriaController {
     // ═════════════════════════════════════════════════════════════════════════
 
     /**
-     * ✅ ACTUALIZADO: Retorna AuditoriaResponse con información enriquecida
+     * Listado paginado con filtros combinables (todos opcionales).
      *
-     * GET /api/v1/auditoria
-     * GET /api/v1/auditoria?usuarioId=1
+     * GET /api/v1/auditoria?buscar=SGC&usuarioId=1&modulo=ATENCIONES
+     *                      &accion=CREAR_ATENCION&fechaDesde=2026-10-01&fechaHasta=2026-10-11
+     *
+     * usuarioId=0 significa "Sistema" (acciones sin usuario).
      */
     @GetMapping
     @PreAuthorize("hasAnyRole('ADMINISTRADOR','LIDER_SAASA')")
     @Operation(
             summary = "Listar auditorías",
-            description = "Lista todas las auditorías del sistema con filtro opcional por usuario"
+            description = "Lista las auditorías de la estación/línea activa con filtros opcionales"
     )
     public ResponseEntity<ApiResponse<Page<AuditoriaResponse>>> findAll(
-            @Parameter(description = "ID del usuario para filtrar (opcional)")
+            @Parameter(description = "Texto libre (correlativo, PNR, nombre...)")
+            @RequestParam(required = false) String buscar,
+
+            @Parameter(description = "ID del usuario (0 = Sistema)")
             @RequestParam(required = false) Long usuarioId,
+
+            @Parameter(description = "Módulo")
+            @RequestParam(required = false) String modulo,
+
+            @Parameter(description = "Acción")
+            @RequestParam(required = false) String accion,
+
+            @Parameter(description = "Fecha desde (yyyy-MM-dd)")
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaDesde,
+
+            @Parameter(description = "Fecha hasta (yyyy-MM-dd)")
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaHasta,
 
             @PageableDefault(size = 20, sort = "creadoEn", direction = Sort.Direction.DESC)
             Pageable pageable
     ) {
-        Page<AuditoriaResponse> auditorias = usuarioId != null
-                ? auditoriaService.buscarPorUsuario(usuarioId, pageable)
-                : auditoriaService.listar(pageable);
+        Page<AuditoriaResponse> auditorias = auditoriaService.buscarConFiltros(
+                buscar, usuarioId, modulo, accion, fechaDesde, fechaHasta, pageable);
 
         return ResponseEntity.ok(ApiResponse.success(auditorias));
     }
@@ -149,10 +168,12 @@ public class AuditoriaController {
             @RequestParam(required = false) String accion,
 
             @Parameter(description = "Fecha desde (yyyy-MM-dd)")
-            @RequestParam(required = false) LocalDate fechaDesde,
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaDesde,
 
             @Parameter(description = "Fecha hasta (yyyy-MM-dd)")
-            @RequestParam(required = false) LocalDate fechaHasta
+            @RequestParam(required = false)
+            @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate fechaHasta
     ) {
         byte[] excel = auditoriaService.exportarExcel(
                 buscar, usuarioId, modulo, accion, fechaDesde, fechaHasta);

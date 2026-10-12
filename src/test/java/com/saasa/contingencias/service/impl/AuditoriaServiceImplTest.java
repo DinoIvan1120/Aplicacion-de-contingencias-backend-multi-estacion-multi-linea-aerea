@@ -28,6 +28,12 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
+import jakarta.persistence.criteria.CriteriaBuilder;
+import jakarta.persistence.criteria.CriteriaQuery;
+import jakarta.persistence.criteria.Expression;
+import jakarta.persistence.criteria.Path;
+import jakarta.persistence.criteria.Root;
+
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -361,6 +367,54 @@ class AuditoriaServiceImplTest {
                 PageRequest.of(0, 10));
 
         verify(auditoriaRepository).findAll(any(Specification.class), any(Pageable.class));
+    }
+
+    @Test
+    @DisplayName("buscarConFiltros — usuarioId=0 (Sistema) → filtra usuario IS NULL")
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void buscarConFiltros_usuarioIdCero_filtraUsuarioNull() {
+        when(estacionContext.resolverContextoActivoLectura()).thenReturn(new ScopeEstacionLinea(1L, null));
+        when(auditoriaRepository.findAll(any(Specification.class), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        service.buscarConFiltros(null, 0L, null, null, null, null, PageRequest.of(0, 10));
+
+        ArgumentCaptor<Specification<Auditoria>> captor = ArgumentCaptor.forClass(Specification.class);
+        verify(auditoriaRepository).findAll(captor.capture(), any(Pageable.class));
+
+        Root<Auditoria> root = mock(Root.class);
+        CriteriaQuery<?> query = mock(CriteriaQuery.class);
+        CriteriaBuilder cb = mock(CriteriaBuilder.class);
+        Path<Object> path = mock(Path.class);
+        when(root.get(anyString())).thenReturn(path);
+
+        captor.getValue().toPredicate(root, query, cb);
+
+        verify(cb).isNull(path);
+    }
+
+    @Test
+    @DisplayName("buscarConFiltros — usuarioId real → NO usa IS NULL")
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    void buscarConFiltros_usuarioIdReal_noFiltraNull() {
+        when(estacionContext.resolverContextoActivoLectura()).thenReturn(new ScopeEstacionLinea(1L, null));
+        when(auditoriaRepository.findAll(any(Specification.class), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        service.buscarConFiltros(null, 5L, null, null, null, null, PageRequest.of(0, 10));
+
+        ArgumentCaptor<Specification<Auditoria>> captor = ArgumentCaptor.forClass(Specification.class);
+        verify(auditoriaRepository).findAll(captor.capture(), any(Pageable.class));
+
+        Root<Auditoria> root = mock(Root.class);
+        CriteriaQuery<?> query = mock(CriteriaQuery.class);
+        CriteriaBuilder cb = mock(CriteriaBuilder.class);
+        Path<Object> path = mock(Path.class);
+        when(root.get(anyString())).thenReturn(path);
+
+        captor.getValue().toPredicate(root, query, cb);
+
+        verify(cb, never()).isNull(any(Expression.class));
     }
 
     // ══════════════════════════════════════════════════════════════════════
