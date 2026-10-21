@@ -32,6 +32,7 @@ import com.saasa.contingencias.domain.model.ServicioAsignado;
 import com.saasa.contingencias.domain.model.Vuelo;
 import com.saasa.contingencias.domain.repository.LineaAereaRepository;
 import com.saasa.contingencias.service.IS3StorageService;
+import com.saasa.contingencias.util.QrTexto;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -60,7 +61,9 @@ import java.util.stream.Collectors;
  *  - logo dinámico de la aerolínea (LineaAerea.logoKey en S3, respaldo
  *    estático para Plus Ultra), aquí convertido a escala de grises;
  *  - idioma ES/EN según Atencion.idiomaVoucher (en grupal, el del titular);
- *  - mismo contenido del QR de verificación que el voucher A4;
+ *  - QR de verificación con el MISMO contenido que se imprime en el
+ *    ticket (pasajeros, vuelo, servicios y lo que incluye cada uno), en
+ *    ASCII para que cualquier app de escaneo lo lea igual;
  *  - la firma NO se imprime cuando origenFirma = AGENTE_LOTE.
  *
  * Página: ancho fijo y alto variable. Se dibuja en una página muy alta y
@@ -290,23 +293,22 @@ public class TicketPdfRenderer {
                 .setTextAlignment(TextAlignment.CENTER));
     }
 
+    /** Una línea "Etiqueta: valor" de un bloque de servicio. */
+    private record Dato(String etiqueta, String valor) {
+    }
+
+    /** Un servicio (hotel, transporte o restaurante) tal como se imprime. */
+    private record Bloque(String titulo, List<Dato> datos, Proveedor proveedor) {
+    }
+
     /**
-     * Hotel, transporte y restaurante como bloques de texto (en el ticket no
-     * hay tablas). Une en un solo bloque lo que el A4 muestra en el resumen y
-     * en la tabla de detalle: proveedor, fechas, cantidades, dirección y teléfono.
-     *
-     * @param separarConLineas true: línea punteada antes de cada bloque;
-     *                         false: solo un espacio (usado dentro de la
-     *                         sección de cada pasajero del ticket grupal).
+     * Arma los bloques de hotel, transporte y restaurante UNA sola vez. Los
+     * usan tanto la impresión del ticket como el contenido del QR, así lo
+     * que dice el QR es siempre exactamente lo que está impreso.
      */
-    private void bloqueServicios(Ticket t, List<ServicioAsignado> servicios, boolean separarConLineas) {
-        Voz v = t.v;
-        if (servicios == null || servicios.isEmpty()) {
-            if (separarConLineas) separador(t);
-            t.doc.add(parrafo(v.t("Sin servicios asignados", "No services assigned"), t.e.texto)
-                    .setItalic().setMarginTop(separarConLineas ? 0 : 4));
-            return;
-        }
+    private List<Bloque> armarBloques(List<ServicioAsignado> servicios, Voz v) {
+        List<Bloque> bloques = new ArrayList<>();
+        if (servicios == null || servicios.isEmpty()) return bloques;
 
         Map<TipoDetalleEnum, List<ServicioAsignado>> porTipo = servicios.stream()
                 .collect(Collectors.groupingBy(ServicioAsignado::getTipoDetalle));
@@ -315,19 +317,18 @@ public class TicketPdfRenderer {
         List<ServicioAsignado> hoteles = porTipo.get(TipoDetalleEnum.HOTEL);
         if (hoteles != null && !hoteles.isEmpty()) {
             ServicioAsignado hotel = hoteles.get(0);
-            inicioBloque(t, separarConLineas);
-            seccion(t, "HOTEL: " + nombreProveedor(hotel).toUpperCase());
+            List<Dato> datos = new ArrayList<>();
 
             if (hotel.getFechaIngreso() != null || hotel.getFechaSalida() != null) {
-                dato(t, "Check-in:", fecha(hotel.getFechaIngreso()));
-                dato(t, "Check-out:", fecha(hotel.getFechaSalida()));
+                datos.add(new Dato("Check-in:", fecha(hotel.getFechaIngreso())));
+                datos.add(new Dato("Check-out:", fecha(hotel.getFechaSalida())));
             }
 
             String habitaciones = hoteles.stream()
                     .map(s -> cantidad(s) + " " + traducirTipoHabitacion(
                             s.getTipoHabitacion() != null ? s.getTipoHabitacion() : "SIMPLE", v))
                     .collect(Collectors.joining(", "));
-            dato(t, v.t("Hab.:", "Room(s):"), habitaciones);
+            datos.add(new Dato(v.t("Hab.:", "Room(s):"), habitaciones));
 
             int des = 0, alm = 0, snk = 0, cen = 0;
             for (ServicioAsignado s : hoteles) {
@@ -337,29 +338,28 @@ public class TicketPdfRenderer {
                 if (Boolean.TRUE.equals(s.getCena()))     cen += cantidad(s);
             }
             String incluye = comidas(v, des, alm, snk, cen);
-            if (!incluye.isEmpty()) dato(t, v.t("Incluye:", "Includes:"), incluye);
+            if (!incluye.isEmpty()) datos.add(new Dato(v.t("Incluye:", "Includes:"), incluye));
 
-            contacto(t, proveedor(hotel));
+            bloques.add(new Bloque("HOTEL: " + nombreProveedor(hotel).toUpperCase(), datos, proveedor(hotel)));
         }
 
         // ── TRANSPORTE ─────────────────────────────────────────────────────
         List<ServicioAsignado> transportes = porTipo.get(TipoDetalleEnum.TRANSPORTE);
         if (transportes != null && !transportes.isEmpty()) {
             ServicioAsignado trans = transportes.get(0);
-            inicioBloque(t, separarConLineas);
-            seccion(t, v.t("TRANSPORTE: ", "TRANSPORTATION: ") + nombreProveedor(trans).toUpperCase());
-            dato(t, v.t("Pasajeros:", "Passengers:"), String.valueOf(cantidad(trans)));
-            dato(t, v.t("Tipo:", "Type:"), traducirTipoTransporte(trans.getTipoTransporte(), v));
-            contacto(t, proveedor(trans));
+            List<Dato> datos = new ArrayList<>();
+            datos.add(new Dato(v.t("Pasajeros:", "Passengers:"), String.valueOf(cantidad(trans))));
+            datos.add(new Dato(v.t("Tipo:", "Type:"), traducirTipoTransporte(trans.getTipoTransporte(), v)));
+            bloques.add(new Bloque(v.t("TRANSPORTE: ", "TRANSPORTATION: ") + nombreProveedor(trans).toUpperCase(),
+                    datos, proveedor(trans)));
         }
 
         // ── RESTAURANTE ────────────────────────────────────────────────────
         List<ServicioAsignado> restaurantes = porTipo.get(TipoDetalleEnum.RESTAURANTE);
         if (restaurantes != null && !restaurantes.isEmpty()) {
             ServicioAsignado rest = restaurantes.get(0);
-            inicioBloque(t, separarConLineas);
-            seccion(t, v.t("RESTAURANTE: ", "RESTAURANT: ") + nombreProveedor(rest).toUpperCase());
-            dato(t, "Pax:", String.valueOf(cantidad(rest)));
+            List<Dato> datos = new ArrayList<>();
+            datos.add(new Dato("Pax:", String.valueOf(cantidad(rest))));
 
             int des = 0, alm = 0, cen = 0;
             for (ServicioAsignado s : restaurantes) {
@@ -368,9 +368,38 @@ public class TicketPdfRenderer {
                 if (Boolean.TRUE.equals(s.getCena()))     cen += cantidad(s);
             }
             String incluye = comidas(v, des, alm, 0, cen);
-            if (!incluye.isEmpty()) dato(t, v.t("Incluye:", "Includes:"), incluye);
+            if (!incluye.isEmpty()) datos.add(new Dato(v.t("Incluye:", "Includes:"), incluye));
 
-            contacto(t, proveedor(rest));
+            bloques.add(new Bloque(v.t("RESTAURANTE: ", "RESTAURANT: ") + nombreProveedor(rest).toUpperCase(),
+                    datos, proveedor(rest)));
+        }
+        return bloques;
+    }
+
+    /**
+     * Imprime hotel, transporte y restaurante como bloques de texto (en el
+     * ticket no hay tablas): proveedor, fechas, cantidades, lo que incluye,
+     * dirección y teléfono.
+     *
+     * @param separarConLineas true: línea punteada antes de cada bloque;
+     *                         false: solo un espacio (usado dentro de la
+     *                         sección de cada pasajero del ticket grupal).
+     */
+    private void bloqueServicios(Ticket t, List<ServicioAsignado> servicios, boolean separarConLineas) {
+        List<Bloque> bloques = armarBloques(servicios, t.v);
+        if (bloques.isEmpty()) {
+            if (separarConLineas) separador(t);
+            t.doc.add(parrafo(sinServicios(t.v), t.e.texto)
+                    .setItalic().setMarginTop(separarConLineas ? 0 : 4));
+            return;
+        }
+        for (Bloque b : bloques) {
+            inicioBloque(t, separarConLineas);
+            seccion(t, b.titulo());
+            for (Dato d : b.datos()) {
+                dato(t, d.etiqueta(), d.valor());
+            }
+            contacto(t, b.proveedor());
         }
     }
 
@@ -461,9 +490,7 @@ public class TicketPdfRenderer {
     }
 
     private void pie(Ticket t, Atencion atencion) {
-        Vuelo vuelo = atencion.getVuelo();
-        String aerolinea = vuelo != null && vuelo.getAerolinea() != null ? vuelo.getAerolinea() : "PLUS ULTRA";
-        t.doc.add(parrafo(aerolinea + " - " + fechaPie(atencion), t.e.chico)
+        t.doc.add(parrafo(textoPie(atencion), t.e.chico)
                 .setItalic()
                 .setTextAlignment(TextAlignment.CENTER)
                 .setMarginTop(8));
@@ -496,88 +523,102 @@ public class TicketPdfRenderer {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    // CONTENIDO DEL QR (idéntico al del voucher A4)
+    // CONTENIDO DEL QR (lo mismo que se imprime en el ticket)
     // ═══════════════════════════════════════════════════════════════════════
 
+    /*
+     * El QR repite, línea por línea, los datos impresos en el ticket: título
+     * y correlativo, pasajero(s), vuelo, PNR, lugar, cada servicio con lo que
+     * incluye y el pie. No lleva direcciones ni teléfonos de los proveedores
+     * (son datos de contacto, no del voucher) para que el QR no crezca de más
+     * y se siga leyendo bien impreso en térmica.
+     */
+
     private String contenidoQrIndividual(Atencion atencion, List<ServicioAsignado> servicios, Voz v) {
-        StringBuilder qr = new StringBuilder();
-        qr.append("VOUCHER: ").append(atencion.getNumeroCorrelativo()).append("\n");
-        qr.append(v.t("PASAJERO: ", "PASSENGER: ")).append(atencion.getNombre()).append("/").append(atencion.getApellido()).append("\n");
-        qr.append(v.t("VUELO: ", "FLIGHT: ")).append(atencion.getVuelo().getCodigoVuelo());
-        if (atencion.getFechaEmision() != null) {
-            qr.append("/").append(atencion.getFechaEmision().format(FMT_YYMMDD));
-        }
-        qr.append("\n");
-        qr.append("PNR: ").append(atencion.getPnr()).append("\n");
-        for (ServicioAsignado sv : servicios) {
-            qr.append(describirServicioParaQR(sv, v)).append("\n");
-        }
-        qr.append(v.t("EMITIDO: ", "ISSUED: ")).append(lugar(atencion)).append("\n");
-        String aerolinea = atencion.getVuelo().getAerolinea() != null ? atencion.getVuelo().getAerolinea() : "PLUS ULTRA";
-        qr.append("AirportHub - ").append(aerolinea);
-        return qr.toString();
+        List<String> l = new ArrayList<>();
+        l.add(v.t("VOUCHER DE SERVICIO ", "SERVICE VOUCHER ") + texto(atencion.getNumeroCorrelativo()));
+        l.add(lineaQr(v.t("Pasajero:", "Passenger:"), nombreConBarra(atencion)));
+        l.add(lineaQr(v.t("Vuelo:", "Flight:"), vueloInfo(atencion)));
+        l.add(lineaQr("PNR:", atencion.getPnr()));
+        l.add(lineaQr(v.t("Lugar:", "Site:"), lugar(atencion)));
+        agregarServiciosQr(l, servicios, v);
+        l.add(textoPie(atencion));
+        return String.join("\n", l);
     }
 
     private String contenidoQrGrupal(List<Atencion> atenciones,
                                      Map<Long, List<ServicioAsignado>> serviciosPorAtencion,
                                      boolean serviciosCompartidos, Voz v) {
         Atencion titular = atenciones.get(0);
-        StringBuilder qr = new StringBuilder();
-        qr.append(v.t("VOUCHER GRUPAL: ", "GROUP VOUCHER: ")).append(titular.getNumeroCorrelativo()).append("\n");
-        qr.append(v.t("PASAJEROS (", "PASSENGERS (")).append(atenciones.size()).append("): ");
-        qr.append(atenciones.stream()
-                .map(a -> a.getNombre() + "/" + a.getApellido())
-                .collect(Collectors.joining(", ")));
-        qr.append("\n");
-        qr.append(v.t("VUELO: ", "FLIGHT: ")).append(titular.getVuelo().getCodigoVuelo());
-        if (titular.getFechaEmision() != null) {
-            qr.append("/").append(titular.getFechaEmision().format(FMT_YYMMDD));
+        int total = atenciones.size();
+        List<String> l = new ArrayList<>();
+        l.add(v.t("VOUCHER DE SERVICIO ", "SERVICE VOUCHER ") + texto(titular.getNumeroCorrelativo()));
+        l.add(v.t("GRUPAL - ", "GROUP - ") + total + v.t(" PASAJEROS", " PASSENGERS"));
+        l.add(lineaQr(v.t("Vuelo:", "Flight:"), vueloInfo(titular)));
+        l.add(lineaQr("PNR:", titular.getPnr()));
+        l.add(lineaQr(v.t("Lugar:", "Site:"), lugar(titular)));
+
+        l.add(v.t("PASAJEROS (", "PASSENGERS (") + total + "):");
+        int i = 1;
+        for (Atencion a : atenciones) {
+            l.add(i + ". " + nombreConBarra(a) + " " + texto(a.getNumeroCorrelativo()));
+            i++;
         }
-        qr.append("\n");
-        qr.append("PNR: ").append(titular.getPnr()).append("\n");
 
         if (serviciosCompartidos) {
-            for (ServicioAsignado sv : serviciosPorAtencion.getOrDefault(titular.getId(), List.of())) {
-                qr.append(describirServicioParaQR(sv, v)).append("\n");
-            }
+            agregarServiciosQr(l, serviciosPorAtencion.getOrDefault(titular.getId(), List.of()), v);
         } else {
+            i = 1;
             for (Atencion a : atenciones) {
-                List<ServicioAsignado> servicios = serviciosPorAtencion.getOrDefault(a.getId(), List.of());
-                qr.append(a.getNombre()).append("/").append(a.getApellido())
-                        .append(": ").append(servicios.size()).append(v.t(" servicio(s)\n", " service(s)\n"));
+                l.add(v.t("PASAJERO ", "PASSENGER ") + i + "/" + total + ": " + nombreConBarra(a));
+                agregarServiciosQr(l, serviciosPorAtencion.getOrDefault(a.getId(), List.of()), v);
+                i++;
             }
         }
-        qr.append(v.t("EMITIDO: ", "ISSUED: ")).append(lugar(titular)).append("\n");
-        String aerolinea = titular.getVuelo().getAerolinea() != null ? titular.getVuelo().getAerolinea() : "PLUS ULTRA";
-        qr.append("AirportHub - ").append(aerolinea);
-        return qr.toString();
+        l.add(textoPie(titular));
+        return String.join("\n", l);
     }
 
-    private String describirServicioParaQR(ServicioAsignado sv, Voz v) {
-        String tipo = traducirTipoServicio(sv.getTipoDetalle(), v);
-        String prov = sv.getVueloRecurso() != null && sv.getVueloRecurso().getProveedor() != null
-                ? sv.getVueloRecurso().getProveedor().getNombre() : "N/A";
-        StringBuilder sb = new StringBuilder(tipo).append(": ").append(prov);
-        if (sv.getTipoHabitacion() != null) sb.append(" (").append(sv.getCantidad()).append("x").append(traducirTipoHabitacion(sv.getTipoHabitacion(), v)).append(")");
-        if (sv.getTipoTransporte() != null) sb.append(" (").append(sv.getCantidad()).append(" PAX - ").append(traducirTipoTransporte(sv.getTipoTransporte(), v)).append(")");
-        if (sv.getTipoDetalle() == TipoDetalleEnum.RESTAURANTE) sb.append(" (").append(sv.getCantidad()).append(v.t(" cubiertos)", " covers)"));
-        return sb.toString();
+    /** Los mismos bloques que se imprimen, sin dirección ni teléfono. */
+    private void agregarServiciosQr(List<String> lineas, List<ServicioAsignado> servicios, Voz v) {
+        List<Bloque> bloques = armarBloques(servicios, v);
+        if (bloques.isEmpty()) {
+            lineas.add(sinServicios(v));
+            return;
+        }
+        for (Bloque b : bloques) {
+            lineas.add(b.titulo());
+            for (Dato d : b.datos()) {
+                lineas.add(lineaQr(d.etiqueta(), d.valor()));
+            }
+        }
+    }
+
+    /** Igual que dato(): si no hay valor se muestra "-". */
+    private String lineaQr(String etiqueta, String valor) {
+        return etiqueta + " " + (valor == null || valor.isBlank() ? "-" : valor);
     }
 
     /**
      * QR nítido para térmica: se codifica primero a su tamaño nativo (1 px
      * por módulo) y luego se vuelve a generar a 8 px exactos por módulo,
      * para que al escalarlo no queden módulos borrosos o desiguales.
+     *
+     * El texto se pasa a ASCII (sin tildes ni Ñ) antes de codificarlo: muchas
+     * apps de escaneo ignoran la marca UTF-8 del QR y adivinan otra
+     * codificación, y "RODRÍGUEZ" se leía como "RODR虾UEZ". En ASCII todas
+     * las apps leen exactamente el mismo texto. Sin CHARACTER_SET el QR usa
+     * la codificación por defecto del estándar y no lleva marca ECI.
      */
     private byte[] generarQrPng(String contenido) throws Exception {
+        String texto = QrTexto.paraQr(contenido);
         QRCodeWriter writer = new QRCodeWriter();
         Map<EncodeHintType, Object> hints = new HashMap<>();
-        hints.put(EncodeHintType.CHARACTER_SET, "UTF-8");
         hints.put(EncodeHintType.MARGIN, 1);
 
-        BitMatrix nativo = writer.encode(contenido, BarcodeFormat.QR_CODE, 0, 0, hints);
+        BitMatrix nativo = writer.encode(texto, BarcodeFormat.QR_CODE, 0, 0, hints);
         int lado = nativo.getWidth() * 8;
-        BitMatrix matriz = writer.encode(contenido, BarcodeFormat.QR_CODE, lado, lado, hints);
+        BitMatrix matriz = writer.encode(texto, BarcodeFormat.QR_CODE, lado, lado, hints);
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         MatrixToImageWriter.writeToStream(matriz, "PNG", out);
@@ -749,6 +790,16 @@ public class TicketPdfRenderer {
         return a.getLugarEmision() != null ? a.getLugarEmision() : "LIM";
     }
 
+    private String textoPie(Atencion a) {
+        Vuelo vuelo = a.getVuelo();
+        String aerolinea = vuelo != null && vuelo.getAerolinea() != null ? vuelo.getAerolinea() : "PLUS ULTRA";
+        return aerolinea + " - " + fechaPie(a);
+    }
+
+    private String sinServicios(Voz v) {
+        return v.t("Sin servicios asignados", "No services assigned");
+    }
+
     private String fechaPie(Atencion a) {
         if (a.getFechaEmision() != null) return a.getFechaEmision().format(FMT_DATE);
         if (a.getCreatedAt() != null) return a.getCreatedAt().toLocalDate().format(FMT_DATE);
@@ -782,14 +833,6 @@ public class TicketPdfRenderer {
             case "DOBLE" -> v.t("DOBLE", "DOUBLE");
             case "MATRIMONIAL" -> v.t("MATRIMONIAL", "MATRIMONIAL (DOUBLE BED)");
             default -> tipoHabitacion;
-        };
-    }
-
-    private String traducirTipoServicio(TipoDetalleEnum tipo, Voz v) {
-        return switch (tipo) {
-            case HOTEL -> "HOTEL";
-            case TRANSPORTE -> v.t("TRANSPORTE", "TRANSPORTATION");
-            case RESTAURANTE -> v.t("RESTAURANTE", "RESTAURANT");
         };
     }
 }

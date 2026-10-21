@@ -6,13 +6,20 @@ import com.google.zxing.Result;
 import com.google.zxing.client.j2se.BufferedImageLuminanceSource;
 import com.google.zxing.common.HybridBinarizer;
 import com.google.zxing.qrcode.QRCodeReader;
+import com.itextpdf.kernel.geom.Matrix;
 import com.itextpdf.kernel.geom.Rectangle;
 import com.itextpdf.kernel.pdf.PdfDictionary;
 import com.itextpdf.kernel.pdf.PdfDocument;
 import com.itextpdf.kernel.pdf.PdfName;
 import com.itextpdf.kernel.pdf.PdfReader;
 import com.itextpdf.kernel.pdf.PdfStream;
+import com.itextpdf.kernel.pdf.canvas.parser.EventType;
+import com.itextpdf.kernel.pdf.canvas.parser.PdfCanvasProcessor;
 import com.itextpdf.kernel.pdf.canvas.parser.PdfTextExtractor;
+import com.itextpdf.kernel.pdf.canvas.parser.data.IEventData;
+import com.itextpdf.kernel.pdf.canvas.parser.data.ImageRenderInfo;
+import com.itextpdf.kernel.pdf.canvas.parser.data.TextRenderInfo;
+import com.itextpdf.kernel.pdf.canvas.parser.listener.IEventListener;
 import com.itextpdf.kernel.pdf.xobject.PdfImageXObject;
 import com.saasa.contingencias.domain.enumeration.IdiomaVoucherEnum;
 import com.saasa.contingencias.domain.enumeration.OrigenFirmaEnum;
@@ -47,6 +54,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -62,8 +70,8 @@ import static org.mockito.Mockito.when;
  * en memoria a partir de entidades de dominio. Además de validar la firma
  * %PDF-, abre el PDF generado con iText para comprobar lo propio del
  * ticket: una sola página, ancho exacto del rollo, alto recortado al
- * contenido, textos esperados y QR legible con el MISMO contenido que el
- * QR del voucher A4.
+ * contenido, textos esperados y QR legible con el MISMO contenido que se
+ * imprime en el ticket (en ASCII, sin tildes).
  */
 class TicketPdfRendererTest {
 
@@ -259,21 +267,25 @@ class TicketPdfRendererTest {
     }
 
     @Test
-    @DisplayName("Individual → el QR se lee y tiene el MISMO contenido que el QR del voucher A4")
-    void renderIndividual_qrLegibleConContenidoDelA4() throws Exception {
+    @DisplayName("Individual → el QR se lee y tiene el MISMO contenido que se imprime en el ticket")
+    void renderIndividual_qrLegibleConContenidoDelTicket() throws Exception {
         Vuelo v = vuelo("Plus Ultra");
         Atencion a = atencion(v, 1L, "SGC-LIM-PU-000001", "Ana", "Ruiz");
 
         byte[] pdf = renderer.renderIndividual(a, List.of(hotel(a, v, "SIMPLE", 1)), 80);
 
-        String esperado = "VOUCHER: SGC-LIM-PU-000001\n"
-                + "PASAJERO: Ana/Ruiz\n"
-                + "VUELO: PU301/261020\n"
+        String esperado = "VOUCHER DE SERVICIO SGC-LIM-PU-000001\n"
+                + "Pasajero: ANA/RUIZ\n"
+                + "Vuelo: PU301/261020\n"
                 + "PNR: ABC123\n"
-                + "HOTEL: Novotel Lima (1xSIMPLE)\n"
-                + "EMITIDO: LIM\n"
-                + "AirportHub - Plus Ultra";
-        assertTrue(qrsDecodificados(pdf).contains(esperado), "El QR del ticket debe coincidir con el del A4");
+                + "Lugar: LIM\n"
+                + "HOTEL: NOVOTEL LIMA\n"
+                + "Check-in: 20/10/2026\n"
+                + "Check-out: 21/10/2026\n"
+                + "Hab.: 1 SIMPLE\n"
+                + "Incluye: 1 desayuno, 1 almuerzo, 1 snack, 1 cena\n"
+                + "Plus Ultra - 20/10/2026";
+        assertEquals(List.of(esperado), qrsDecodificados(pdf), "El QR debe repetir lo impreso en el ticket");
     }
 
     @Test
@@ -441,8 +453,8 @@ class TicketPdfRendererTest {
     }
 
     @Test
-    @DisplayName("Grupal → el QR se lee y tiene el MISMO contenido que el QR del A4 grupal")
-    void renderGrupal_qrLegibleConContenidoDelA4() throws Exception {
+    @DisplayName("Grupal → el QR se lee y tiene el MISMO contenido que se imprime en el ticket")
+    void renderGrupal_qrLegibleConContenidoDelTicket() throws Exception {
         Vuelo v = vuelo("Plus Ultra");
         Atencion titular = atencion(v, 1L, "SGC-LIM-PU-000002", "Juan", "Perez");
         Atencion acomp = atencion(v, 2L, "SGC-LIM-PU-000003", "Flor", "Vasquez");
@@ -451,14 +463,44 @@ class TicketPdfRendererTest {
         byte[] pdf = renderer.renderGrupal(List.of(titular, acomp),
                 Map.of(1L, compartidos, 2L, compartidos), true, 80);
 
-        String esperado = "VOUCHER GRUPAL: SGC-LIM-PU-000002\n"
-                + "PASAJEROS (2): Juan/Perez, Flor/Vasquez\n"
-                + "VUELO: PU301/261020\n"
+        String esperado = "VOUCHER DE SERVICIO SGC-LIM-PU-000002\n"
+                + "GRUPAL - 2 PASAJEROS\n"
+                + "Vuelo: PU301/261020\n"
                 + "PNR: ABC123\n"
-                + "HOTEL: Novotel Lima (1xDOBLE)\n"
-                + "EMITIDO: LIM\n"
-                + "AirportHub - Plus Ultra";
-        assertTrue(qrsDecodificados(pdf).contains(esperado), "El QR grupal debe coincidir con el del A4");
+                + "Lugar: LIM\n"
+                + "PASAJEROS (2):\n"
+                + "1. JUAN/PEREZ SGC-LIM-PU-000002\n"
+                + "2. FLOR/VASQUEZ SGC-LIM-PU-000003\n"
+                + "HOTEL: NOVOTEL LIMA\n"
+                + "Check-in: 20/10/2026\n"
+                + "Check-out: 21/10/2026\n"
+                + "Hab.: 1 DOBLE\n"
+                + "Incluye: 1 desayuno, 1 almuerzo, 1 snack, 1 cena\n"
+                + "Plus Ultra - 20/10/2026";
+        assertEquals(List.of(esperado), qrsDecodificados(pdf), "El QR grupal debe repetir lo impreso en el ticket");
+    }
+
+    @Test
+    @DisplayName("Grupal con restaurante y tildes → el QR dice Pax e Incluye (no 'cubiertos') y va en ASCII")
+    void renderGrupal_qrRestauranteComoTicket_sinCubiertosYEnAscii() throws Exception {
+        Vuelo v = vuelo("Plus Ultra");
+        Atencion titular = atencion(v, 1L, "SGC-LIM-PU-000002", "Johnny MR", "Acero");
+        Atencion acomp = atencion(v, 2L, "SGC-LIM-PU-000003", "Fabiola", "Rodríguez Espinoza");
+        List<ServicioAsignado> compartidos = List.of(restaurante(titular, v, 2));
+
+        byte[] pdf = renderer.renderGrupal(List.of(titular, acomp),
+                Map.of(1L, compartidos, 2L, compartidos), true, 104);
+
+        List<String> qrs = qrsDecodificados(pdf);
+        assertEquals(1, qrs.size());
+        String qr = qrs.get(0);
+        assertTrue(qr.contains("2. FABIOLA/RODRIGUEZ ESPINOZA SGC-LIM-PU-000003"), qr);
+        assertTrue(qr.contains("RESTAURANTE: LA ROSA NAUTICA RESTAURANT\nPax: 2\nIncluye: 2 desayunos"), qr);
+        assertFalse(qr.contains("cubiertos"), "El ticket no imprime 'cubiertos', el QR tampoco");
+        assertTrue(qr.chars().allMatch(c -> c == '\n' || (c >= 0x20 && c <= 0x7E)), "El QR debe ir en ASCII");
+
+        // En el ticket impreso sí se conservan las tildes
+        assertTrue(texto(pdf).contains("FABIOLA/RODRÍGUEZ ESPINOZA"));
     }
 
     @Test
@@ -498,7 +540,7 @@ class TicketPdfRendererTest {
     }
 
     @Test
-    @DisplayName("Grupal de 6 pasajeros (máximo real) con servicios COMPARTIDOS → una página y QR legible con el contenido del A4")
+    @DisplayName("Grupal de 6 pasajeros (máximo real) con servicios COMPARTIDOS → una página y QR legible con lo impreso")
     void renderGrupal_seisPasajerosCompartidos_qrLegible() throws Exception {
         Vuelo v = vuelo("Plus Ultra");
         List<Atencion> grupo = new ArrayList<>();
@@ -520,17 +562,27 @@ class TicketPdfRendererTest {
         }
         assertTrue(texto(pdf).contains("6 PASAJEROS"));
 
-        String esperado = "VOUCHER GRUPAL: SGC-LIM-PU-000001\n"
-                + "PASAJEROS (6): Pasajero1/Apellido1, Pasajero2/Apellido2, Pasajero3/Apellido3, "
-                + "Pasajero4/Apellido4, Pasajero5/Apellido5, Pasajero6/Apellido6\n"
-                + "VUELO: PU301/261020\n"
+        StringBuilder esperado = new StringBuilder("VOUCHER DE SERVICIO SGC-LIM-PU-000001\n"
+                + "GRUPAL - 6 PASAJEROS\n"
+                + "Vuelo: PU301/261020\n"
                 + "PNR: ABC123\n"
-                + "HOTEL: Novotel Lima (3xDOBLE)\n"
-                + "TRANSPORTE: Lima Airport Transfer VIP (6 PAX - AEROPUERTO - DOMICILIO Y DOMICILIO - AEROPUERTO)\n"
-                + "EMITIDO: LIM\n"
-                + "AirportHub - Plus Ultra";
-        assertTrue(qrsDecodificados(pdf).contains(esperado),
-                "Con 6 pasajeros el QR debe generarse y coincidir con el del A4");
+                + "Lugar: LIM\n"
+                + "PASAJEROS (6):\n");
+        for (int i = 1; i <= 6; i++) {
+            esperado.append(i).append(". PASAJERO").append(i).append("/APELLIDO").append(i)
+                    .append(String.format(" SGC-LIM-PU-%06d", i)).append("\n");
+        }
+        esperado.append("HOTEL: NOVOTEL LIMA\n"
+                + "Check-in: 20/10/2026\n"
+                + "Check-out: 21/10/2026\n"
+                + "Hab.: 3 DOBLE\n"
+                + "Incluye: 3 desayunos, 3 almuerzos, 3 snacks, 3 cenas\n"
+                + "TRANSPORTE: LIMA AIRPORT TRANSFER VIP\n"
+                + "Pasajeros: 6\n"
+                + "Tipo: AEROPUERTO - DOMICILIO Y DOMICILIO - AEROPUERTO\n"
+                + "Plus Ultra - 20/10/2026");
+        assertEquals(List.of(esperado.toString()), qrsDecodificados(pdf),
+                "Con 6 pasajeros el QR debe generarse y repetir lo impreso en el ticket");
     }
 
     @Test
@@ -654,6 +706,101 @@ class TicketPdfRendererTest {
         }
     }
 
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Tamaño reducido de logo y título (ahorro de papel)
+    // ══════════════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("Logo 104 mm (individual) → cabe en la caja reducida de 45 × 14 mm")
+    void logo_104mm_individual_cabeEnCajaReducida() throws Exception {
+        Vuelo v = vueloConLogoLatam(pngColor(300, 100));
+        Atencion a = atencion(v, 1L, "SGC-LIM-LA-000001", "Ana", "Ruiz");
+
+        float[] logoMm = tamanoLogoMm(renderer.renderIndividual(a, List.of(), 104));
+
+        // Logo 3:1 → lo limita el alto: 14 mm de alto × 42 mm de ancho
+        assertEquals(14f, logoMm[1], 0.2f, "Alto del logo en rollo de 104 mm");
+        assertEquals(42f, logoMm[0], 0.2f, "Ancho del logo en rollo de 104 mm");
+    }
+
+    @Test
+    @DisplayName("Logo 104 mm (grupal) → misma caja reducida que el individual")
+    void logo_104mm_grupal_cabeEnCajaReducida() throws Exception {
+        Vuelo v = vueloConLogoLatam(pngColor(300, 100));
+        Atencion titular = atencion(v, 1L, "SGC-LIM-LA-000002", "Juan", "Perez");
+        Atencion acomp = atencion(v, 2L, "SGC-LIM-LA-000003", "Flor", "Vasquez");
+
+        float[] logoMm = tamanoLogoMm(renderer.renderGrupal(List.of(titular, acomp),
+                Map.of(1L, List.of(), 2L, List.of()), true, 104));
+
+        assertEquals(14f, logoMm[1], 0.2f);
+        assertEquals(42f, logoMm[0], 0.2f);
+    }
+
+    @Test
+    @DisplayName("Logo 80 mm → cabe en la caja reducida de 38 × 12 mm")
+    void logo_80mm_cabeEnCajaReducida() throws Exception {
+        Vuelo v = vueloConLogoLatam(pngColor(300, 100));
+        Atencion a = atencion(v, 1L, "SGC-LIM-LA-000001", "Ana", "Ruiz");
+
+        float[] logoMm = tamanoLogoMm(renderer.renderIndividual(a, List.of(), 80));
+
+        assertEquals(12f, logoMm[1], 0.2f, "Alto del logo en rollo de 80 mm");
+        assertEquals(36f, logoMm[0], 0.2f, "Ancho del logo en rollo de 80 mm");
+    }
+
+    @Test
+    @DisplayName("Logo muy ancho → lo limita el ancho máximo (45 mm en 104 mm)")
+    void logo_104mm_muyAncho_limitadoPorAncho() throws Exception {
+        Vuelo v = vueloConLogoLatam(pngColor(600, 100));
+        Atencion a = atencion(v, 1L, "SGC-LIM-LA-000001", "Ana", "Ruiz");
+
+        float[] logoMm = tamanoLogoMm(renderer.renderIndividual(a, List.of(), 104));
+
+        // Logo 6:1 → lo limita el ancho: 45 mm × 7,5 mm
+        assertEquals(45f, logoMm[0], 0.2f);
+        assertEquals(7.5f, logoMm[1], 0.2f);
+    }
+
+    @Test
+    @DisplayName("Título 104 mm → 12 pt; correlativo al tamaño del texto (9,5 pt)")
+    void titulo_104mm_tamanoReducido() throws Exception {
+        Vuelo v = vuelo("Plus Ultra");
+        Atencion a = atencion(v, 1L, "SGC-LIM-PU-000001", "Ana", "Ruiz");
+
+        Map<String, Float> tamanos = tamanosDeFuente(renderer.renderIndividual(a, List.of(), 104));
+
+        assertEquals(12f, tamanos.get("VOUCHER DE SERVICIO"), 0.01f);
+        assertEquals(9.5f, tamanos.get("SGC-LIM-PU-000001"), 0.01f);
+    }
+
+    @Test
+    @DisplayName("Título 80 mm → 11 pt; correlativo al tamaño del texto (8,5 pt)")
+    void titulo_80mm_tamanoReducido() throws Exception {
+        Vuelo v = vuelo("Plus Ultra");
+        Atencion a = atencion(v, 1L, "SGC-LIM-PU-000001", "Ana", "Ruiz");
+
+        Map<String, Float> tamanos = tamanosDeFuente(renderer.renderIndividual(a, List.of(), 80));
+
+        assertEquals(11f, tamanos.get("VOUCHER DE SERVICIO"), 0.01f);
+        assertEquals(8.5f, tamanos.get("SGC-LIM-PU-000001"), 0.01f);
+    }
+
+    @Test
+    @DisplayName("Título grupal 104 mm → 12 pt y subtítulo GRUPAL al tamaño del texto (9,5 pt)")
+    void titulo_grupal_104mm_tamanoReducido() throws Exception {
+        Vuelo v = vuelo("Plus Ultra");
+        Atencion titular = atencion(v, 1L, "SGC-LIM-PU-000002", "Juan", "Perez");
+        Atencion acomp = atencion(v, 2L, "SGC-LIM-PU-000003", "Flor", "Vasquez");
+
+        Map<String, Float> tamanos = tamanosDeFuente(renderer.renderGrupal(List.of(titular, acomp),
+                Map.of(1L, List.of(), 2L, List.of()), true, 104));
+
+        assertEquals(12f, tamanos.get("VOUCHER DE SERVICIO"), 0.01f);
+        assertEquals(9.5f, tamanos.get("GRUPAL · 2 PASAJEROS"), 0.01f);
+    }
+
     // ══════════════════════════════════════════════════════════════════════
     // Helpers de validación
     // ══════════════════════════════════════════════════════════════════════
@@ -701,6 +848,66 @@ class TicketPdfRendererTest {
                 if (stream != null && PdfName.Image.equals(stream.getAsName(PdfName.Subtype))) n++;
             }
             return n;
+        }
+    }
+
+    /** Vuelo LATAM cuyo logo se descarga (mock) de S3 con los bytes indicados. */
+    private Vuelo vueloConLogoLatam(byte[] logo) throws Exception {
+        Vuelo v = vuelo("LATAM");
+        v.setLineaAereaId(7L);
+        LineaAerea latam = LineaAerea.builder().id(7L).codigoIata("LA").nombre("LATAM")
+                .logoKey("contingencias/logos/LA.png").build();
+        when(lineaAereaRepository.findById(7L)).thenReturn(Optional.of(latam));
+        when(s3StorageService.descargarPdf("contingencias/logos/LA.png")).thenReturn(logo);
+        return v;
+    }
+
+    /**
+     * Tamaño impreso del logo en mm {ancho, alto}, leído de la matriz con la
+     * que se dibuja cada imagen. El QR es cuadrado, así que el logo es la
+     * única imagen que no lo es.
+     */
+    private float[] tamanoLogoMm(byte[] pdf) throws Exception {
+        List<float[]> imagenes = new ArrayList<>();
+        procesar(pdf, (data, tipo) -> {
+            if (tipo == EventType.RENDER_IMAGE) {
+                Matrix ctm = ((ImageRenderInfo) data).getImageCtm();
+                imagenes.add(new float[]{
+                        Math.abs(ctm.get(Matrix.I11)) / PT_POR_MM,
+                        Math.abs(ctm.get(Matrix.I22)) / PT_POR_MM});
+            }
+        });
+        return imagenes.stream()
+                .filter(t -> Math.abs(t[0] - t[1]) > 1f)
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("No se encontró el logo en el ticket"));
+    }
+
+    /** Tamaño de fuente de cada fragmento de texto (primera aparición). */
+    private Map<String, Float> tamanosDeFuente(byte[] pdf) throws Exception {
+        Map<String, Float> tamanos = new HashMap<>();
+        procesar(pdf, (data, tipo) -> {
+            if (tipo == EventType.RENDER_TEXT) {
+                TextRenderInfo info = (TextRenderInfo) data;
+                tamanos.putIfAbsent(info.getText().trim(), info.getFontSize());
+            }
+        });
+        return tamanos;
+    }
+
+    private void procesar(byte[] pdf, java.util.function.BiConsumer<IEventData, EventType> consumidor) throws Exception {
+        try (PdfDocument doc = abrir(pdf)) {
+            new PdfCanvasProcessor(new IEventListener() {
+                @Override
+                public void eventOccurred(IEventData data, EventType tipo) {
+                    consumidor.accept(data, tipo);
+                }
+
+                @Override
+                public Set<EventType> getSupportedEvents() {
+                    return Set.of(EventType.RENDER_IMAGE, EventType.RENDER_TEXT);
+                }
+            }).processPageContent(doc.getPage(1));
         }
     }
 
