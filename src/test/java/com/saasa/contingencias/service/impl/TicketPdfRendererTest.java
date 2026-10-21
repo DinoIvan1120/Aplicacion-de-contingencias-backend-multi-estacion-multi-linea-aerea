@@ -179,6 +179,15 @@ class TicketPdfRendererTest {
                 .build();
     }
 
+    /** Grupo de n pasajeros con correlativos SGC-LIM-PU-000001 … y nombres PasajeroN/ApellidoN. */
+    private List<Atencion> grupo(Vuelo v, int n) {
+        List<Atencion> grupo = new ArrayList<>();
+        for (long i = 1; i <= n; i++) {
+            grupo.add(atencion(v, i, String.format("SGC-LIM-PU-%06d", i), "Pasajero" + i, "Apellido" + i));
+        }
+        return grupo;
+    }
+
     /** Firma realista: PNG con un trazo, en data URL base64 (como la guarda el canvas del agente). */
     private String firmaDataUrl() throws Exception {
         BufferedImage img = new BufferedImage(260, 90, BufferedImage.TYPE_INT_ARGB);
@@ -605,6 +614,97 @@ class TicketPdfRendererTest {
         }
         assertTrue(texto(pdf).contains("PASAJERO 6/6"));
         assertEquals(1, qrsDecodificados(pdf).size(), "Debe haber exactamente un QR legible");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Grupos grandes (un PNR compartido no tiene límite; se han visto hasta 30)
+    // ══════════════════════════════════════════════════════════════════════
+
+    @Test
+    @DisplayName("Grupal de 10 pasajeros (límite) → el QR todavía lleva la lista completa de nombres")
+    void renderGrupal_diezPasajeros_qrConListaCompleta() throws Exception {
+        Vuelo v = vuelo("Plus Ultra");
+        List<Atencion> grupo = grupo(v, TicketPdfRenderer.MAX_PASAJEROS_QR_DETALLE);
+        List<ServicioAsignado> compartidos = List.of(hotel(grupo.get(0), v, "DOBLE", 5));
+        Map<Long, List<ServicioAsignado>> mapa = new HashMap<>();
+        grupo.forEach(a -> mapa.put(a.getId(), compartidos));
+
+        List<String> qrs = qrsDecodificados(renderer.renderGrupal(grupo, mapa, true, 104));
+
+        assertEquals(1, qrs.size());
+        String qr = qrs.get(0);
+        assertTrue(qr.contains("PASAJEROS (10):"), qr);
+        assertTrue(qr.contains("1. PASAJERO1/APELLIDO1 SGC-LIM-PU-000001"), qr);
+        assertTrue(qr.contains("10. PASAJERO10/APELLIDO10 SGC-LIM-PU-000010"), qr);
+    }
+
+    @Test
+    @DisplayName("Grupal de 30 pasajeros COMPARTIDOS → una página, todos impresos y QR resumido con rango de correlativos")
+    void renderGrupal_treintaPasajerosCompartidos_qrResumido() throws Exception {
+        Vuelo v = vuelo("Plus Ultra");
+        List<Atencion> grupo = grupo(v, 30);
+        List<ServicioAsignado> compartidos = List.of(hotel(grupo.get(0), v, "DOBLE", 15), transporte(grupo.get(0), v, 30));
+        Map<Long, List<ServicioAsignado>> mapa = new HashMap<>();
+        grupo.forEach(a -> mapa.put(a.getId(), compartidos));
+
+        byte[] pdf = renderer.renderGrupal(grupo, mapa, true, 104);
+
+        assertPdfValido(pdf);
+        try (PdfDocument doc = abrir(pdf)) {
+            assertEquals(1, doc.getNumberOfPages(), "30 pasajeros deben salir en UNA sola tira");
+            float altoMm = doc.getPage(1).getMediaBox().getHeight() / PT_POR_MM;
+            assertTrue(altoMm < 600, "30 pasajeros compartidos ≈ 52 cm, no más de 60 cm (fue " + altoMm + " mm)");
+        }
+
+        // En el ticket impreso sí van los 30 pasajeros con su correlativo
+        String texto = texto(pdf);
+        assertTrue(texto.contains("30 PASAJEROS"));
+        assertTrue(texto.contains("PASAJERO1/APELLIDO1"));
+        assertTrue(texto.contains("PASAJERO30/APELLIDO30"));
+        assertTrue(texto.contains("SGC-LIM-PU-000030"));
+
+        String esperado = "VOUCHER DE SERVICIO SGC-LIM-PU-000001\n"
+                + "GRUPAL - 30 PASAJEROS\n"
+                + "Vuelo: PU301/261020\n"
+                + "PNR: ABC123\n"
+                + "Lugar: LIM\n"
+                + "PASAJEROS: 30 (SGC-LIM-PU-000001 a SGC-LIM-PU-000030)\n"
+                + "HOTEL: NOVOTEL LIMA\n"
+                + "Check-in: 20/10/2026\n"
+                + "Check-out: 21/10/2026\n"
+                + "Hab.: 15 DOBLE\n"
+                + "Incluye: 15 desayunos, 15 almuerzos, 15 snacks, 15 cenas\n"
+                + "TRANSPORTE: LIMA AIRPORT TRANSFER VIP\n"
+                + "Pasajeros: 30\n"
+                + "Tipo: AEROPUERTO - DOMICILIO Y DOMICILIO - AEROPUERTO\n"
+                + "Plus Ultra - 20/10/2026";
+        assertEquals(List.of(esperado), qrsDecodificados(pdf),
+                "Con 30 pasajeros el QR va resumido: sin la lista de nombres, con el rango de correlativos");
+    }
+
+    @Test
+    @DisplayName("Grupal de 30 pasajeros INDEPENDIENTES → una página y QR resumido que remite al ticket impreso")
+    void renderGrupal_treintaPasajerosIndependientes_qrResumido() throws Exception {
+        Vuelo v = vuelo("Plus Ultra");
+        List<Atencion> grupo = grupo(v, 30);
+        Map<Long, List<ServicioAsignado>> mapa = new HashMap<>();
+        grupo.forEach(a -> mapa.put(a.getId(), List.of(hotel(a, v, "SIMPLE", 1), transporte(a, v, 1))));
+
+        byte[] pdf = renderer.renderGrupal(grupo, mapa, false, 80);
+
+        assertPdfValido(pdf);
+        try (PdfDocument doc = abrir(pdf)) {
+            assertEquals(1, doc.getNumberOfPages());
+        }
+        assertTrue(texto(pdf).contains("PASAJERO 30/30"), "El ticket imprime la sección de cada pasajero");
+
+        List<String> qrs = qrsDecodificados(pdf);
+        assertEquals(1, qrs.size(), "Debe haber exactamente un QR legible");
+        String qr = qrs.get(0);
+        assertTrue(qr.contains("PASAJEROS: 30 (SGC-LIM-PU-000001 a SGC-LIM-PU-000030)"), qr);
+        assertTrue(qr.contains("Servicios por pasajero: ver ticket impreso"), qr);
+        assertFalse(qr.contains("PASAJERO 1/30"), "El QR no repite la sección de cada pasajero");
+        assertFalse(qr.contains("HOTEL:"), "El QR no repite los servicios de cada pasajero");
     }
 
     // ══════════════════════════════════════════════════════════════════════

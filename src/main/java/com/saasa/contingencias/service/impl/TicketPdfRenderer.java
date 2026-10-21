@@ -89,6 +89,15 @@ public class TicketPdfRenderer {
 
     private static final String LOGO_PLUS_ULTRA_PATH = "/images/plus-ultra-logo.png";
 
+    /**
+     * Hasta esta cantidad de pasajeros el QR grupal lleva la lista completa
+     * de nombres. En grupos más grandes (un PNR compartido no tiene límite;
+     * en la operación se han visto hasta 30) el QR lleva solo la cantidad y
+     * el rango de correlativos: la lista ya está impresa en el ticket y, con
+     * 30 nombres, el QR quedaría tan denso que costaría leerlo en térmica.
+     */
+    static final int MAX_PASAJEROS_QR_DETALLE = 10;
+
     private final LineaAereaRepository lineaAereaRepository;
     private final IS3StorageService s3StorageService;
 
@@ -532,6 +541,10 @@ public class TicketPdfRenderer {
      * incluye y el pie. No lleva direcciones ni teléfonos de los proveedores
      * (son datos de contacto, no del voucher) para que el QR no crezca de más
      * y se siga leyendo bien impreso en térmica.
+     *
+     * Grupos de más de MAX_PASAJEROS_QR_DETALLE pasajeros: en lugar de la
+     * lista de nombres va la cantidad y el rango de correlativos, y si los
+     * servicios son por pasajero, una sola línea que remite al ticket impreso.
      */
 
     private String contenidoQrIndividual(Atencion atencion, List<ServicioAsignado> servicios, Voz v) {
@@ -558,17 +571,28 @@ public class TicketPdfRenderer {
         l.add(lineaQr("PNR:", titular.getPnr()));
         l.add(lineaQr(v.t("Lugar:", "Site:"), lugar(titular)));
 
-        l.add(v.t("PASAJEROS (", "PASSENGERS (") + total + "):");
-        int i = 1;
-        for (Atencion a : atenciones) {
-            l.add(i + ". " + nombreConBarra(a) + " " + texto(a.getNumeroCorrelativo()));
-            i++;
+        boolean resumido = total > MAX_PASAJEROS_QR_DETALLE;
+        if (resumido) {
+            Atencion ultimo = atenciones.get(total - 1);
+            l.add(v.t("PASAJEROS: ", "PASSENGERS: ") + total
+                    + " (" + texto(titular.getNumeroCorrelativo())
+                    + v.t(" a ", " to ") + texto(ultimo.getNumeroCorrelativo()) + ")");
+        } else {
+            l.add(v.t("PASAJEROS (", "PASSENGERS (") + total + "):");
+            int i = 1;
+            for (Atencion a : atenciones) {
+                l.add(i + ". " + nombreConBarra(a) + " " + texto(a.getNumeroCorrelativo()));
+                i++;
+            }
         }
 
         if (serviciosCompartidos) {
             agregarServiciosQr(l, serviciosPorAtencion.getOrDefault(titular.getId(), List.of()), v);
+        } else if (resumido) {
+            l.add(v.t("Servicios por pasajero: ver ticket impreso",
+                    "Services per passenger: see printed ticket"));
         } else {
-            i = 1;
+            int i = 1;
             for (Atencion a : atenciones) {
                 l.add(v.t("PASAJERO ", "PASSENGER ") + i + "/" + total + ": " + nombreConBarra(a));
                 agregarServiciosQr(l, serviciosPorAtencion.getOrDefault(a.getId(), List.of()), v);
