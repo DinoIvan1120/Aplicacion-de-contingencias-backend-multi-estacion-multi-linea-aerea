@@ -100,9 +100,10 @@ public class TicketPdfRenderer {
     // ═══════════════════════════════════════════════════════════════════════
 
     private enum Estilo {
+        // Logo y título reducidos para ahorrar papel (aprox. 12 mm menos por ticket).
         //          título  sección  texto  chico  qrMm  logoAnchoMm  logoAltoMm
-        ANCHO_80(   13f,    10f,     8.5f,  7.5f,  40f,  55f,         20f),
-        ANCHO_104(  15f,    11f,     9.5f,  8f,    46f,  70f,         24f);
+        ANCHO_80(   11f,    10f,     8.5f,  7.5f,  40f,  38f,         12f),
+        ANCHO_104(  12f,    11f,     9.5f,  8f,    46f,  45f,         14f);
 
         final float titulo, seccion, texto, chico, qrMm, logoAnchoMm, logoAltoMm;
 
@@ -279,13 +280,13 @@ public class TicketPdfRenderer {
         t.doc.add(parrafo(t.v.t("VOUCHER DE SERVICIO", "SERVICE VOUCHER"), t.e.titulo)
                 .setBold()
                 .setTextAlignment(TextAlignment.CENTER)
-                .setMarginTop(4));
+                .setMarginTop(2));
         if (subtitulo != null) {
-            t.doc.add(parrafo(subtitulo, t.e.texto + 0.5f)
+            t.doc.add(parrafo(subtitulo, t.e.texto)
                     .setBold()
                     .setTextAlignment(TextAlignment.CENTER));
         }
-        t.doc.add(parrafo(correlativo, t.e.texto + 1f)
+        t.doc.add(parrafo(correlativo, t.e.texto)
                 .setTextAlignment(TextAlignment.CENTER));
     }
 
