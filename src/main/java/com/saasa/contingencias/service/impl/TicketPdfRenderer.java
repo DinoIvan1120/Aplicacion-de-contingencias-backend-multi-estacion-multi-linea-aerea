@@ -101,8 +101,8 @@ public class TicketPdfRenderer {
 
     private enum Estilo {
         //          título  sección  texto  chico  qrMm  logoAnchoMm  logoAltoMm
-        ANCHO_80(   13f,    10f,     8.5f,  7.5f,  40f,  48f,         14f),
-        ANCHO_104(  15f,    11f,     9.5f,  8f,    46f,  60f,         17f);
+        ANCHO_80(   13f,    10f,     8.5f,  7.5f,  40f,  55f,         20f),
+        ANCHO_104(  15f,    11f,     9.5f,  8f,    46f,  70f,         24f);
 
         final float titulo, seccion, texto, chico, qrMm, logoAnchoMm, logoAltoMm;
 
@@ -619,29 +619,67 @@ public class TicketPdfRenderer {
 
     /**
      * Convierte el logo a escala de grises sobre fondo blanco (las zonas
-     * transparentes quedan blancas). Si el formato no es legible por
-     * ImageIO, devuelve los bytes originales.
+     * transparentes quedan blancas) y RECORTA los bordes vacíos, para que el
+     * margen que traiga la imagen subida no achique el logo en el ticket.
+     * Si el formato no es legible por ImageIO, devuelve los bytes originales.
      */
     private byte[] aEscalaDeGrises(byte[] bytes) {
         try {
             BufferedImage original = ImageIO.read(new ByteArrayInputStream(bytes));
             if (original == null) return bytes;
 
-            BufferedImage gris = new BufferedImage(original.getWidth(), original.getHeight(),
-                    BufferedImage.TYPE_BYTE_GRAY);
+            int w = original.getWidth();
+            int h = original.getHeight();
+            BufferedImage gris = new BufferedImage(w, h, BufferedImage.TYPE_BYTE_GRAY);
             Graphics2D g = gris.createGraphics();
             g.setColor(java.awt.Color.WHITE);
-            g.fillRect(0, 0, original.getWidth(), original.getHeight());
+            g.fillRect(0, 0, w, h);
             g.drawImage(original, 0, 0, null);
             g.dispose();
 
+            BufferedImage recortada = recortarBordesBlancos(gris);
+
             ByteArrayOutputStream out = new ByteArrayOutputStream();
-            ImageIO.write(gris, "png", out);
+            ImageIO.write(recortada, "png", out);
             return out.toByteArray();
         } catch (Exception ex) {
-            log.warn("⚠️ No se pudo convertir el logo a escala de grises: {}", ex.getMessage());
+            log.warn("⚠️ No se pudo preparar el logo para el ticket: {}", ex.getMessage());
             return bytes;
         }
+    }
+
+    /**
+     * Devuelve la imagen recortada al área con contenido (píxeles que no son
+     * casi blancos), dejando un margen de 2 % para que el logo no quede pegado
+     * al borde. Si la imagen está vacía o ya no tiene margen, la devuelve igual.
+     */
+    private BufferedImage recortarBordesBlancos(BufferedImage gris) {
+        final int UMBRAL = 245; // 0 = negro, 255 = blanco
+        int w = gris.getWidth();
+        int h = gris.getHeight();
+        int minX = w, minY = h, maxX = -1, maxY = -1;
+
+        var raster = gris.getRaster();
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                if (raster.getSample(x, y, 0) < UMBRAL) {
+                    if (x < minX) minX = x;
+                    if (x > maxX) maxX = x;
+                    if (y < minY) minY = y;
+                    if (y > maxY) maxY = y;
+                }
+            }
+        }
+        if (maxX < 0) return gris; // imagen completamente blanca
+
+        int margen = Math.max(2, Math.round(Math.max(w, h) * 0.02f));
+        minX = Math.max(0, minX - margen);
+        minY = Math.max(0, minY - margen);
+        maxX = Math.min(w - 1, maxX + margen);
+        maxY = Math.min(h - 1, maxY + margen);
+
+        if (minX == 0 && minY == 0 && maxX == w - 1 && maxY == h - 1) return gris;
+        return gris.getSubimage(minX, minY, maxX - minX + 1, maxY - minY + 1);
     }
 
     // ═══════════════════════════════════════════════════════════════════════

@@ -618,6 +618,42 @@ class TicketPdfRendererTest {
         assertEquals(1, contarImagenes(pdf), "Solo el QR");
     }
 
+    @Test
+    @DisplayName("Logo con mucho margen vacío → se recorta antes de ponerlo en el ticket")
+    void logo_conMargenVacio_seRecortaAlContenido() throws Exception {
+        // Lienzo 600x600 transparente con el "logo" real de 300x100 al centro
+        BufferedImage lienzo = new BufferedImage(600, 600, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = lienzo.createGraphics();
+        g.setColor(Color.BLACK);
+        g.fillRect(150, 250, 300, 100);
+        g.dispose();
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ImageIO.write(lienzo, "png", out);
+
+        Vuelo v = vuelo("LATAM");
+        v.setLineaAereaId(7L);
+        LineaAerea latam = LineaAerea.builder().id(7L).codigoIata("LA").nombre("LATAM")
+                .logoKey("contingencias/logos/LA.png").build();
+        when(lineaAereaRepository.findById(7L)).thenReturn(Optional.of(latam));
+        when(s3StorageService.descargarPdf("contingencias/logos/LA.png")).thenReturn(out.toByteArray());
+        Atencion a = atencion(v, 1L, "SGC-LIM-LA-000001", "Ana", "Ruiz");
+
+        byte[] pdf = renderer.renderIndividual(a, List.of(), 80);
+
+        // El logo embebido debe medir ~300x100 (+ margen), no 600x600
+        try (PdfDocument doc = abrir(pdf)) {
+            PdfDictionary xobjects = doc.getPage(1).getResources().getResource(PdfName.XObject);
+            boolean logoRecortado = false;
+            for (PdfName nombre : xobjects.keySet()) {
+                PdfStream s = xobjects.getAsStream(nombre);
+                if (s == null || !PdfName.Image.equals(s.getAsName(PdfName.Subtype))) continue;
+                PdfImageXObject img = new PdfImageXObject(s);
+                if (img.getWidth() < 400 && img.getHeight() < 200) logoRecortado = true;
+            }
+            assertTrue(logoRecortado, "El logo debe quedar recortado a su contenido");
+        }
+    }
+
     // ══════════════════════════════════════════════════════════════════════
     // Helpers de validación
     // ══════════════════════════════════════════════════════════════════════
