@@ -7,15 +7,29 @@ import com.saasa.contingencias.domain.enumeration.OrigenFirmaEnum;
 import com.saasa.contingencias.domain.model.*;
 import com.saasa.contingencias.domain.repository.LineaAereaRepository;
 import com.saasa.contingencias.service.IS3StorageService;
+import com.google.zxing.BinaryBitmap;
+import com.google.zxing.DecodeHintType;
+import com.google.zxing.client.j2se.BufferedImageLuminanceSource;
+import com.google.zxing.common.HybridBinarizer;
+import com.google.zxing.qrcode.QRCodeReader;
+import com.itextpdf.kernel.pdf.PdfDictionary;
+import com.itextpdf.kernel.pdf.PdfDocument;
+import com.itextpdf.kernel.pdf.PdfName;
+import com.itextpdf.kernel.pdf.PdfReader;
+import com.itextpdf.kernel.pdf.PdfStream;
+import com.itextpdf.kernel.pdf.xobject.PdfImageXObject;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -704,8 +718,181 @@ class PdfGeneratorServiceImplTest {
     }
 
     // ══════════════════════════════════════════════════════════════════════
+    // QR de verificación (mismo contenido que el ticket térmico, vía VoucherQr)
+    // ══════════════════════════════════════════════════════════════════════
+
+    private ServicioAsignado hotelConComidas(Atencion a, Vuelo v, String tipoHabitacion, int cantidad) {
+        return ServicioAsignado.builder()
+                .id(10L).atencion(a)
+                .vueloRecurso(recurso(v, proveedor("Novotel Lima", "Av. José Pardo 879", "+51 1 610 8000")))
+                .tipoDetalle(TipoDetalleEnum.HOTEL)
+                .tipoHabitacion(tipoHabitacion)
+                .cantidad(cantidad)
+                .montoUnitario(new BigDecimal("150.00"))
+                .montoSubtotal(new BigDecimal("150.00"))
+                .asignadoEn(LocalDateTime.now())
+                .desayuno(true).almuerzo(true)
+                .fechaIngreso(LocalDate.of(2026, 7, 20))
+                .fechaSalida(LocalDate.of(2026, 7, 21))
+                .build();
+    }
+
+    private ServicioAsignado restauranteDesayuno(Atencion a, Vuelo v, int cantidad) {
+        Proveedor p = Proveedor.builder().id(3L).tipo(TipoProveedorEnum.RESTAURANTE)
+                .nombre("La Rosa Náutica Restaurant").ruc("20999999999").build();
+        return ServicioAsignado.builder()
+                .id(11L).atencion(a).vueloRecurso(recurso(v, p))
+                .tipoDetalle(TipoDetalleEnum.RESTAURANTE)
+                .cantidad(cantidad)
+                .montoUnitario(new BigDecimal("40.00"))
+                .montoSubtotal(new BigDecimal("40.00"))
+                .asignadoEn(LocalDateTime.now())
+                .desayuno(true)
+                .build();
+    }
+
+    @Test
+    @DisplayName("QR A4 individual → se lee y es IDÉNTICO al QR del ticket térmico de la misma atención")
+    void generarVoucher_qrIgualAlDelTicket() throws Exception {
+        Vuelo v = vuelo("Plus Ultra");
+        Atencion a = atencion(v, LocalDate.of(2026, 7, 20));
+        List<ServicioAsignado> servicios = List.of(hotelConComidas(a, v, "DOBLE", 1));
+
+        List<String> qrA4 = qrsDecodificados(pdfService.generarVoucher(a, servicios));
+        TicketPdfRenderer ticket = new TicketPdfRenderer(mock(LineaAereaRepository.class), mock(IS3StorageService.class));
+        List<String> qrTicket = qrsDecodificados(ticket.renderIndividual(a, servicios, 104));
+
+        assertEquals(1, qrA4.size(), "El A4 debe tener exactamente un QR legible");
+        assertEquals(qrTicket, qrA4, "El A4 y el ticket deben llevar el mismo QR");
+
+        String esperado = "VOUCHER DE SERVICIO SGC-000001000\n"
+                + "Pasajero: ANA/RUIZ\n"
+                + "Vuelo: PU301/260720\n"
+                + "PNR: ABC123\n"
+                + "Lugar: LIM\n"
+                + "HOTEL: NOVOTEL LIMA\n"
+                + "Check-in: 20/07/2026\n"
+                + "Check-out: 21/07/2026\n"
+                + "Hab.: 1 DOBLE\n"
+                + "Incluye: 1 desayuno, 1 almuerzo\n"
+                + "Plus Ultra - 20/07/2026";
+        assertEquals(esperado, qrA4.get(0));
+    }
+
+    @Test
+    @DisplayName("QR A4 grupal con tildes y restaurante → ASCII, 'Pax/Incluye' (no 'cubiertos') e igual al del ticket")
+    void generarVoucherGrupal_qrAsciiSinCubiertosIgualAlTicket() throws Exception {
+        Vuelo v = vuelo("Plus Ultra");
+        Atencion titular = atencionGrupo(v, 1L, "SGC-000000001", "Johnny MR", "Acero");
+        Atencion acomp = atencionGrupo(v, 2L, "SGC-000000002", "Fabiola", "Rodríguez Espinoza");
+        List<ServicioAsignado> compartidos = List.of(restauranteDesayuno(titular, v, 2));
+        Map<Long, List<ServicioAsignado>> mapa = Map.of(1L, compartidos, 2L, compartidos);
+
+        List<String> qrA4 = qrsDecodificados(pdfService.generarVoucherGrupal(List.of(titular, acomp), mapa, true));
+        TicketPdfRenderer ticket = new TicketPdfRenderer(mock(LineaAereaRepository.class), mock(IS3StorageService.class));
+        List<String> qrTicket = qrsDecodificados(ticket.renderGrupal(List.of(titular, acomp), mapa, true, 104));
+
+        assertEquals(1, qrA4.size());
+        assertEquals(qrTicket, qrA4, "El A4 grupal y el ticket grupal deben llevar el mismo QR");
+        String qr = qrA4.get(0);
+        assertTrue(qr.contains("2. FABIOLA/RODRIGUEZ ESPINOZA SGC-000000002"), qr);
+        assertTrue(qr.contains("RESTAURANTE: LA ROSA NAUTICA RESTAURANT\nPax: 2\nIncluye: 2 desayunos"), qr);
+        assertFalse(qr.contains("cubiertos"), qr);
+        assertFalse(qr.contains("AirportHub"), "Ya no se usa el formato antiguo del QR");
+        assertTrue(qr.chars().allMatch(c -> c == '\n' || (c >= 0x20 && c <= 0x7E)), "El QR debe ir en ASCII");
+    }
+
+    @Test
+    @DisplayName("QR A4 grupal de 30 pasajeros → resumido con rango de correlativos, sin lista de nombres")
+    void generarVoucherGrupal_treintaPasajeros_qrResumido() throws Exception {
+        Vuelo v = vuelo("Plus Ultra");
+        List<Atencion> grupo = new ArrayList<>();
+        for (long i = 1; i <= 30; i++) {
+            grupo.add(atencionGrupo(v, i, String.format("SGC-%09d", i), "Pasajero" + i, "Apellido" + i));
+        }
+        List<ServicioAsignado> compartidos = List.of(hotelConComidas(grupo.get(0), v, "DOBLE", 15));
+        Map<Long, List<ServicioAsignado>> mapa = new HashMap<>();
+        grupo.forEach(a -> mapa.put(a.getId(), compartidos));
+
+        byte[] pdf = pdfService.generarVoucherGrupal(grupo, mapa, true);
+
+        assertPdfValido(pdf);
+        List<String> qrs = qrsDecodificados(pdf);
+        assertEquals(1, qrs.size(), "Debe haber exactamente un QR legible");
+        String qr = qrs.get(0);
+        assertTrue(qr.contains("GRUPAL - 30 PASAJEROS"), qr);
+        assertTrue(qr.contains("PASAJEROS: 30 (SGC-000000001 a SGC-000000030)"), qr);
+        assertFalse(qr.contains("1. PASAJERO1/APELLIDO1"), "Con más de 10 pasajeros el QR no lleva la lista de nombres");
+        assertTrue(qr.contains("Hab.: 15 DOBLE"), qr);
+    }
+
+    @Test
+    @DisplayName("QR A4 grupal de 30 pasajeros con servicios INDEPENDIENTES → remite al voucher impreso")
+    void generarVoucherGrupal_treintaPasajerosIndependientes_qrRemiteAlVoucher() throws Exception {
+        Vuelo v = vuelo("Plus Ultra");
+        List<Atencion> grupo = new ArrayList<>();
+        Map<Long, List<ServicioAsignado>> mapa = new HashMap<>();
+        for (long i = 1; i <= 30; i++) {
+            Atencion a = atencionGrupo(v, i, String.format("SGC-%09d", i), "Pasajero" + i, "Apellido" + i);
+            grupo.add(a);
+            mapa.put(i, List.of(hotelConComidas(a, v, "SIMPLE", 1)));
+        }
+
+        List<String> qrs = qrsDecodificados(pdfService.generarVoucherGrupal(grupo, mapa, false));
+
+        assertEquals(1, qrs.size());
+        String qr = qrs.get(0);
+        assertTrue(qr.contains("PASAJEROS: 30 (SGC-000000001 a SGC-000000030)"), qr);
+        assertTrue(qr.contains("Servicios por pasajero: ver voucher impreso"), qr);
+        assertFalse(qr.contains("HOTEL:"), "El QR no repite los servicios de cada pasajero");
+    }
+
+    @Test
+    @DisplayName("QR A4 en inglés (idiomaVoucher = EN) → etiquetas del QR traducidas")
+    void generarVoucher_qrEnIngles() throws Exception {
+        Vuelo v = vuelo("Plus Ultra");
+        Atencion a = atencion(v, LocalDate.of(2026, 7, 20));
+        a.setIdiomaVoucher(IdiomaVoucherEnum.EN);
+
+        List<String> qrs = qrsDecodificados(pdfService.generarVoucher(a, List.of(hotelConComidas(a, v, "DOBLE", 1))));
+
+        assertEquals(1, qrs.size());
+        String qr = qrs.get(0);
+        assertTrue(qr.startsWith("SERVICE VOUCHER SGC-000001000\nPassenger: ANA/RUIZ\nFlight: PU301/260720"), qr);
+        assertTrue(qr.contains("Room(s): 1 DOUBLE"), qr);
+        assertTrue(qr.contains("Includes: 1 breakfast, 1 lunch"), qr);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
     // Helper de validación
     // ══════════════════════════════════════════════════════════════════════
+
+    /** Decodifica todas las imágenes del PDF (todas las páginas) y devuelve las que sean QR legibles. */
+    private List<String> qrsDecodificados(byte[] pdf) throws Exception {
+        List<String> resultado = new ArrayList<>();
+        Map<DecodeHintType, Object> hints = new HashMap<>();
+        hints.put(DecodeHintType.PURE_BARCODE, Boolean.TRUE);
+
+        try (PdfDocument doc = new PdfDocument(new PdfReader(new ByteArrayInputStream(pdf)))) {
+            for (int p = 1; p <= doc.getNumberOfPages(); p++) {
+                PdfDictionary xobjects = doc.getPage(p).getResources().getResource(PdfName.XObject);
+                if (xobjects == null) continue;
+                for (PdfName nombre : xobjects.keySet()) {
+                    PdfStream stream = xobjects.getAsStream(nombre);
+                    if (stream == null || !PdfName.Image.equals(stream.getAsName(PdfName.Subtype))) continue;
+                    try {
+                        BufferedImage img = new PdfImageXObject(stream).getBufferedImage();
+                        if (img == null) continue;
+                        BinaryBitmap bitmap = new BinaryBitmap(new HybridBinarizer(new BufferedImageLuminanceSource(img)));
+                        resultado.add(new QRCodeReader().decode(bitmap, hints).getText());
+                    } catch (Exception noEsQr) {
+                        // logo, firma u otra imagen: se ignora
+                    }
+                }
+            }
+        }
+        return resultado;
+    }
 
     /** Verifica que los bytes generados sean un PDF válido (firma %PDF-). */
     private void assertPdfValido(byte[] pdf) {

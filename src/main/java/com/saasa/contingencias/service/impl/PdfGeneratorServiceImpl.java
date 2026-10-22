@@ -1,9 +1,5 @@
 package com.saasa.contingencias.service.impl;
 
-import com.google.zxing.*;
-import com.google.zxing.client.j2se.MatrixToImageWriter;
-import com.google.zxing.common.BitMatrix;
-import com.google.zxing.qrcode.QRCodeWriter;
 import com.itextpdf.io.image.ImageDataFactory;
 import com.itextpdf.kernel.colors.ColorConstants;
 import com.itextpdf.kernel.colors.DeviceRgb;
@@ -27,7 +23,6 @@ import org.springframework.stereotype.Service;
 import java.io.ByteArrayOutputStream;
 import java.time.format.DateTimeFormatter;
 import java.util.Base64;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -469,90 +464,22 @@ public class PdfGeneratorServiceImpl implements IPdfGeneratorService {
     }
 
     /**
-     * Código QR de verificación para el voucher GRUPAL. Codifica el PNR
-     * compartido, el vuelo, la lista completa de pasajeros y — cuando los
-     * servicios son compartidos — el detalle de esos servicios (si son
-     * independientes por pasajero, solo referencia cuántos hay, para no
-     * saturar el QR).
+     * Código QR de verificación para el voucher GRUPAL. El contenido lo arma
+     * VoucherQr, el mismo que usa el ticket térmico, así que el A4 y el
+     * ticket de un mismo grupo llevan exactamente el mismo QR. En grupos de
+     * más de VoucherQr.MAX_PASAJEROS_QR_DETALLE pasajeros el QR va resumido
+     * (cantidad y rango de correlativos) para que siga siendo legible.
      */
     private void agregarCodigoQRGrupal(Document doc, List<Atencion> atenciones,
                                        Map<Long, List<ServicioAsignado>> serviciosPorAtencion,
                                        boolean serviciosCompartidos, Voz v) {
         try {
-            Atencion titular = atenciones.get(0);
-
-            doc.add(new Paragraph(v.t("CÓDIGO DE VERIFICACIÓN", "VERIFICATION CODE"))
-                    .setBold()
-                    .setFontSize(11)
-                    .setTextAlignment(TextAlignment.CENTER)
-                    .setMarginTop(15));
-
-            StringBuilder qrBuilder = new StringBuilder();
-            qrBuilder.append(v.t("VOUCHER GRUPAL: ", "GROUP VOUCHER: ")).append(titular.getNumeroCorrelativo()).append("\n");
-            qrBuilder.append(v.t("PASAJEROS (", "PASSENGERS (")).append(atenciones.size()).append("): ");
-            qrBuilder.append(atenciones.stream()
-                    .map(a -> a.getNombre() + "/" + a.getApellido())
-                    .collect(Collectors.joining(", ")));
-            qrBuilder.append("\n");
-            qrBuilder.append(v.t("VUELO: ", "FLIGHT: ")).append(titular.getVuelo().getCodigoVuelo());
-            if (titular.getFechaEmision() != null) {
-                qrBuilder.append("/").append(titular.getFechaEmision().format(DateTimeFormatter.ofPattern("yyMMdd")));
-            }
-            qrBuilder.append("\n");
-            qrBuilder.append("PNR: ").append(titular.getPnr()).append("\n");
-
-            if (serviciosCompartidos) {
-                for (ServicioAsignado sv : serviciosPorAtencion.getOrDefault(titular.getId(), List.of())) {
-                    qrBuilder.append(describirServicioParaQR(sv, v)).append("\n");
-                }
-            } else {
-                for (Atencion a : atenciones) {
-                    List<ServicioAsignado> servicios = serviciosPorAtencion.getOrDefault(a.getId(), List.of());
-                    qrBuilder.append(a.getNombre()).append("/").append(a.getApellido())
-                            .append(": ").append(servicios.size()).append(v.t(" servicio(s)\n", " service(s)\n"));
-                }
-            }
-            qrBuilder.append(v.t("EMITIDO: ", "ISSUED: ")).append(titular.getLugarEmision() != null ? titular.getLugarEmision() : "LIM").append("\n");
-            String nombreAerolineaQR = titular.getVuelo().getAerolinea() != null
-                    ? titular.getVuelo().getAerolinea() : "PLUS ULTRA";
-            qrBuilder.append("AirportHub - ").append(nombreAerolineaQR);
-
-            QRCodeWriter qrWriter = new QRCodeWriter();
-            Map<EncodeHintType, Object> hints = new HashMap<>();
-            hints.put(EncodeHintType.CHARACTER_SET, "UTF-8");
-            BitMatrix matrix = qrWriter.encode(qrBuilder.toString(), BarcodeFormat.QR_CODE, 200, 200, hints);
-
-            ByteArrayOutputStream qrBaos = new ByteArrayOutputStream();
-            MatrixToImageWriter.writeToStream(matrix, "PNG", qrBaos);
-
-            Image qrImage = new Image(ImageDataFactory.create(qrBaos.toByteArray()))
-                    .setWidth(150)
-                    .setHeight(150)
-                    .setHorizontalAlignment(HorizontalAlignment.CENTER);
-            doc.add(qrImage);
-
-            doc.add(new Paragraph(v.t(
-                    "Escanee este código para verificar la autenticidad del voucher",
-                    "Scan this code to verify the voucher's authenticity"))
-                    .setFontSize(8)
-                    .setTextAlignment(TextAlignment.CENTER)
-                    .setMarginTop(8)
-                    .setFontColor(COLOR_GRIS_OSCURO));
-
+            String contenido = VoucherQr.contenidoGrupal(
+                    atenciones, serviciosPorAtencion, serviciosCompartidos, v.idioma);
+            agregarImagenQR(doc, contenido, v);
         } catch (Exception qrEx) {
             log.warn("No se pudo generar QR grupal: {}", qrEx.getMessage());
         }
-    }
-
-    private String describirServicioParaQR(ServicioAsignado sv, Voz v) {
-        String tipo = traducirTipoServicio(sv.getTipoDetalle(), v);
-        String prov = sv.getVueloRecurso() != null && sv.getVueloRecurso().getProveedor() != null
-                ? sv.getVueloRecurso().getProveedor().getNombre() : "N/A";
-        StringBuilder sb = new StringBuilder(tipo).append(": ").append(prov);
-        if (sv.getTipoHabitacion() != null) sb.append(" (").append(sv.getCantidad()).append("x").append(traducirTipoHabitacion(sv.getTipoHabitacion(), v)).append(")");
-        if (sv.getTipoTransporte() != null) sb.append(" (").append(sv.getCantidad()).append(" PAX - ").append(traducirTipoTransporte(sv.getTipoTransporte(), v)).append(")");
-        if (sv.getTipoDetalle() == TipoDetalleEnum.RESTAURANTE) sb.append(" (").append(sv.getCantidad()).append(v.t(" cubiertos)", " covers)"));
-        return sb.toString();
     }
 
     /**
@@ -859,72 +786,40 @@ public class PdfGeneratorServiceImpl implements IPdfGeneratorService {
     }
 
     /**
-     * Agrega código QR de verificación.
+     * Código QR de verificación del voucher individual. El contenido lo arma
+     * VoucherQr (el mismo QR que el ticket térmico de la misma atención):
+     * pasajero, vuelo, PNR, lugar y cada servicio con lo que incluye, en
+     * ASCII para que cualquier app de escaneo lo lea igual.
      */
     private void agregarCodigoQR(Document doc, Atencion atencion, List<ServicioAsignado> servicios, Voz v) {
         try {
-            doc.add(new Paragraph(v.t("CÓDIGO DE VERIFICACIÓN", "VERIFICATION CODE"))
-                    .setBold()
-                    .setFontSize(11)
-                    .setTextAlignment(TextAlignment.CENTER)
-                    .setMarginTop(15));
-
-            // Generar QR code
-            // QR contiene toda la información del voucher
-            StringBuilder qrBuilder = new StringBuilder();
-            qrBuilder.append("VOUCHER: ").append(atencion.getNumeroCorrelativo()).append("\n");
-            qrBuilder.append(v.t("PASAJERO: ", "PASSENGER: ")).append(atencion.getNombre()).append("/").append(atencion.getApellido()).append("\n");
-            qrBuilder.append(v.t("VUELO: ", "FLIGHT: ")).append(atencion.getVuelo().getCodigoVuelo());
-            if (atencion.getFechaEmision() != null) {
-                qrBuilder.append("/").append(atencion.getFechaEmision().format(java.time.format.DateTimeFormatter.ofPattern("yyMMdd")));
-            }
-            qrBuilder.append("\n");
-            qrBuilder.append("PNR: ").append(atencion.getPnr()).append("\n");
-            // Servicios
-            for (ServicioAsignado sv : servicios) {
-                String tipo = traducirTipoServicio(sv.getTipoDetalle(), v);
-                String prov = sv.getVueloRecurso() != null && sv.getVueloRecurso().getProveedor() != null
-                        ? sv.getVueloRecurso().getProveedor().getNombre() : "N/A";
-                qrBuilder.append(tipo).append(": ").append(prov);
-                if (sv.getTipoHabitacion() != null) qrBuilder.append(" (").append(sv.getCantidad()).append("x").append(traducirTipoHabitacion(sv.getTipoHabitacion(), v)).append(")");
-                if (sv.getTipoTransporte() != null) qrBuilder.append(" (").append(sv.getCantidad()).append(" PAX - ").append(traducirTipoTransporte(sv.getTipoTransporte(), v)).append(")");
-                if (sv.getTipoDetalle() == TipoDetalleEnum.RESTAURANTE) qrBuilder.append(" (").append(sv.getCantidad()).append(v.t(" cubiertos)", " covers)"));
-                qrBuilder.append("\n");
-            }
-            qrBuilder.append(v.t("EMITIDO: ", "ISSUED: ")).append(atencion.getLugarEmision() != null ? atencion.getLugarEmision() : "LIM").append("\n");
-            String nombreAerolineaQR = atencion.getVuelo().getAerolinea() != null
-                    ? atencion.getVuelo().getAerolinea() : "PLUS ULTRA";
-            qrBuilder.append("AirportHub - ").append(nombreAerolineaQR);
-            String qrData = qrBuilder.toString();
-            QRCodeWriter qrWriter = new QRCodeWriter();
-            Map<EncodeHintType, Object> hints = new HashMap<>();
-            hints.put(EncodeHintType.CHARACTER_SET, "UTF-8");
-
-            BitMatrix matrix = qrWriter.encode(qrData, BarcodeFormat.QR_CODE, 200, 200, hints);
-
-            ByteArrayOutputStream qrBaos = new ByteArrayOutputStream();
-            MatrixToImageWriter.writeToStream(matrix, "PNG", qrBaos);
-
-            // Agregar imagen QR
-            Image qrImage = new Image(ImageDataFactory.create(qrBaos.toByteArray()))
-                    .setWidth(150)
-                    .setHeight(150)
-                    .setHorizontalAlignment(HorizontalAlignment.CENTER);
-
-            doc.add(qrImage);
-
-            // Texto explicativo
-            doc.add(new Paragraph(v.t(
-                    "Escanee este código para verificar la autenticidad del voucher",
-                    "Scan this code to verify the voucher's authenticity"))
-                    .setFontSize(8)
-                    .setTextAlignment(TextAlignment.CENTER)
-                    .setMarginTop(8)
-                    .setFontColor(COLOR_GRIS_OSCURO));
-
+            agregarImagenQR(doc, VoucherQr.contenidoIndividual(atencion, servicios, v.idioma), v);
         } catch (Exception qrEx) {
             log.warn("No se pudo generar QR: {}", qrEx.getMessage());
         }
+    }
+
+    /** Título, imagen del QR y texto explicativo (mismo diseño para individual y grupal). */
+    private void agregarImagenQR(Document doc, String contenido, Voz v) throws Exception {
+        doc.add(new Paragraph(v.t("CÓDIGO DE VERIFICACIÓN", "VERIFICATION CODE"))
+                .setBold()
+                .setFontSize(11)
+                .setTextAlignment(TextAlignment.CENTER)
+                .setMarginTop(15));
+
+        Image qrImage = new Image(ImageDataFactory.create(VoucherQr.png(contenido)))
+                .setWidth(150)
+                .setHeight(150)
+                .setHorizontalAlignment(HorizontalAlignment.CENTER);
+        doc.add(qrImage);
+
+        doc.add(new Paragraph(v.t(
+                "Escanee este código para verificar la autenticidad del voucher",
+                "Scan this code to verify the voucher's authenticity"))
+                .setFontSize(8)
+                .setTextAlignment(TextAlignment.CENTER)
+                .setMarginTop(8)
+                .setFontColor(COLOR_GRIS_OSCURO));
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1000,15 +895,4 @@ public class PdfGeneratorServiceImpl implements IPdfGeneratorService {
         };
     }
 
-    /**
-     * NUEVO — Traduce el tipo de servicio (HOTEL/TRANSPORTE/RESTAURANTE),
-     * usado en el contenido del QR.
-     */
-    private String traducirTipoServicio(TipoDetalleEnum tipo, Voz v) {
-        return switch (tipo) {
-            case HOTEL -> "HOTEL";
-            case TRANSPORTE -> v.t("TRANSPORTE", "TRANSPORTATION");
-            case RESTAURANTE -> v.t("RESTAURANTE", "RESTAURANT");
-        };
-    }
 }

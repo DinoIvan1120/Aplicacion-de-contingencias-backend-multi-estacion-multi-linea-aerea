@@ -624,7 +624,7 @@ class TicketPdfRendererTest {
     @DisplayName("Grupal de 10 pasajeros (límite) → el QR todavía lleva la lista completa de nombres")
     void renderGrupal_diezPasajeros_qrConListaCompleta() throws Exception {
         Vuelo v = vuelo("Plus Ultra");
-        List<Atencion> grupo = grupo(v, TicketPdfRenderer.MAX_PASAJEROS_QR_DETALLE);
+        List<Atencion> grupo = grupo(v, VoucherQr.MAX_PASAJEROS_QR_DETALLE);
         List<ServicioAsignado> compartidos = List.of(hotel(grupo.get(0), v, "DOBLE", 5));
         Map<Long, List<ServicioAsignado>> mapa = new HashMap<>();
         grupo.forEach(a -> mapa.put(a.getId(), compartidos));
@@ -683,7 +683,7 @@ class TicketPdfRendererTest {
     }
 
     @Test
-    @DisplayName("Grupal de 30 pasajeros INDEPENDIENTES → una página y QR resumido que remite al ticket impreso")
+    @DisplayName("Grupal de 30 pasajeros INDEPENDIENTES → una página y QR resumido que remite al voucher impreso")
     void renderGrupal_treintaPasajerosIndependientes_qrResumido() throws Exception {
         Vuelo v = vuelo("Plus Ultra");
         List<Atencion> grupo = grupo(v, 30);
@@ -702,7 +702,7 @@ class TicketPdfRendererTest {
         assertEquals(1, qrs.size(), "Debe haber exactamente un QR legible");
         String qr = qrs.get(0);
         assertTrue(qr.contains("PASAJEROS: 30 (SGC-LIM-PU-000001 a SGC-LIM-PU-000030)"), qr);
-        assertTrue(qr.contains("Servicios por pasajero: ver ticket impreso"), qr);
+        assertTrue(qr.contains("Servicios por pasajero: ver voucher impreso"), qr);
         assertFalse(qr.contains("PASAJERO 1/30"), "El QR no repite la sección de cada pasajero");
         assertFalse(qr.contains("HOTEL:"), "El QR no repite los servicios de cada pasajero");
     }
