@@ -47,6 +47,14 @@ final class VoucherQr {
     /** Hasta esta cantidad de pasajeros el QR grupal lleva la lista de nombres. */
     static final int MAX_PASAJEROS_QR_DETALLE = 10;
 
+    /**
+     * Margen blanco alrededor del QR, en módulos. El estándar ISO/IEC 18004
+     * pide 4: con menos, las líneas y textos vecinos del voucher confunden a
+     * algunas apps de escaneo, que al primer intento devuelven un "código de
+     * barras" falso (p. ej. "0123456789") en lugar del QR.
+     */
+    static final int MARGEN_QR_MODULOS = 4;
+
     private static final DateTimeFormatter FMT_DATE = DateTimeFormatter.ofPattern("dd/MM/yyyy");
     private static final DateTimeFormatter FMT_YYMMDD = DateTimeFormatter.ofPattern("yyMMdd");
 
@@ -150,14 +158,15 @@ final class VoucherQr {
     /**
      * PNG del QR, nítido para impresión: se codifica primero a su tamaño
      * nativo (1 px por módulo) y luego a 8 px exactos por módulo, para que
-     * al escalarlo no queden módulos borrosos o desiguales. El texto se pasa
-     * a ASCII y no se usa CHARACTER_SET, así el QR no lleva marca ECI.
+     * al escalarlo no queden módulos borrosos o desiguales. Lleva el margen
+     * blanco estándar de MARGEN_QR_MODULOS módulos. El texto se pasa a ASCII
+     * y no se usa CHARACTER_SET, así el QR no lleva marca ECI.
      */
     static byte[] png(String contenido) throws Exception {
         String texto = QrTexto.paraQr(contenido);
         QRCodeWriter writer = new QRCodeWriter();
         Map<EncodeHintType, Object> hints = new HashMap<>();
-        hints.put(EncodeHintType.MARGIN, 1);
+        hints.put(EncodeHintType.MARGIN, MARGEN_QR_MODULOS);
 
         BitMatrix nativo = writer.encode(texto, BarcodeFormat.QR_CODE, 0, 0, hints);
         int lado = nativo.getWidth() * 8;
