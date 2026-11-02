@@ -30,6 +30,7 @@ import com.saasa.contingencias.service.impl.VoucherQr.Bloque;
 import com.saasa.contingencias.service.impl.VoucherQr.Dato;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import javax.imageio.ImageIO;
@@ -52,8 +53,13 @@ import java.util.Map;
  *  - logo dinámico de la aerolínea (LineaAerea.logoKey en S3, respaldo
  *    estático para Plus Ultra), aquí convertido a escala de grises;
  *  - idioma ES/EN según Atencion.idiomaVoucher (en grupal, el del titular);
- *  - QR de verificación armado por VoucherQr: el mismo contenido que se
- *    imprime en el ticket y el mismo QR que lleva el voucher A4;
+ *  - QR del ticket = ENLACE CORTO del voucher ({app.public-base-url}/v/
+ *    {correlativo}), el mismo que se envía por WhatsApp. Al escanearlo se
+ *    abre el PDF A4 completo y vigente (VoucherRedirectController). Si la
+ *    atención aún no tiene PDF, el QR lleva un texto corto con los datos
+ *    clave. En papel térmico un QR con el voucher completo queda tan denso
+ *    que las cámaras no lo leen; el A4 y el correo siguen usando el QR
+ *    completo de VoucherQr (sin cambios);
  *  - la firma NO se imprime cuando origenFirma = AGENTE_LOTE.
  *
  * Página: ancho fijo y alto variable. Se dibuja en una página muy alta y
@@ -79,6 +85,10 @@ public class TicketPdfRenderer {
 
     private final LineaAereaRepository lineaAereaRepository;
     private final IS3StorageService s3StorageService;
+
+    /** Misma base que el enlace corto de WhatsApp (VoucherRedirectController). */
+    @Value("${app.public-base-url:}")
+    private String publicBaseUrl;
 
     public TicketPdfRenderer(LineaAereaRepository lineaAereaRepository,
                              IS3StorageService s3StorageService) {
@@ -177,7 +187,7 @@ public class TicketPdfRenderer {
 
         bloqueServicios(t, servicios, true);
 
-        qr(t, VoucherQr.contenidoIndividual(atencion, servicios, t.v.idioma));
+        qrVoucher(t, atencion, contenidoQrIndividual(atencion, t.v));
         firma(t, atencion);
         pie(t, atencion);
 
@@ -242,7 +252,9 @@ public class TicketPdfRenderer {
             t.doc.add(new LineSeparator(new SolidLine(1f)).setMarginTop(6).setMarginBottom(2));
         }
 
-        qr(t, VoucherQr.contenidoGrupal(atenciones, serviciosPorAtencion, serviciosCompartidos, t.v.idioma));
+        // El PDF grupal está en el pdfUrl de todas las atenciones del grupo:
+        // el enlace del titular abre el voucher grupal completo.
+        qrVoucher(t, titular, contenidoQrGrupal(atenciones, t.v));
         // Firma del titular (un solo comprobante para todo el grupo), misma regla que el A4.
         firma(t, titular);
         pie(t, titular);
@@ -326,7 +338,31 @@ public class TicketPdfRenderer {
         }
     }
 
-    private void qr(Ticket t, String contenido) {
+    /**
+     * QR del ticket: enlace corto al PDF completo si la atención ya tiene
+     * PDF y está configurada la URL pública; si no, el texto corto.
+     */
+    private void qrVoucher(Ticket t, Atencion atencion, String textoRespaldo) {
+        String enlace = enlaceVoucher(atencion);
+        if (enlace != null) {
+            qr(t, enlace, t.v.t("Escanee para ver el voucher completo", "Scan to view the full voucher"));
+        } else {
+            qr(t, textoRespaldo, t.v.t("Escanee para verificar el voucher", "Scan to verify the voucher"));
+        }
+    }
+
+    /** {app.public-base-url}/v/{correlativo}, o null si no se puede armar. */
+    private String enlaceVoucher(Atencion atencion) {
+        if (publicBaseUrl == null || publicBaseUrl.isBlank()) return null;
+        if (atencion.getPdfUrl() == null || atencion.getPdfUrl().isBlank()) return null;
+        String correlativo = atencion.getNumeroCorrelativo();
+        if (correlativo == null || correlativo.isBlank()) return null;
+        String base = publicBaseUrl.trim();
+        if (base.endsWith("/")) base = base.substring(0, base.length() - 1);
+        return base + "/v/" + correlativo.trim();
+    }
+
+    private void qr(Ticket t, String contenido, String leyenda) {
         separador(t);
         t.doc.add(parrafo(t.v.t("CÓDIGO DE VERIFICACIÓN", "VERIFICATION CODE"), t.e.texto + 0.5f)
                 .setBold()
@@ -339,12 +375,51 @@ public class TicketPdfRenderer {
             img.setHeight(lado);
             img.setHorizontalAlignment(HorizontalAlignment.CENTER);
             t.doc.add(img);
-            t.doc.add(parrafo(t.v.t("Escanee para verificar el voucher", "Scan to verify the voucher"), t.e.chico)
+            t.doc.add(parrafo(leyenda, t.e.chico)
                     .setTextAlignment(TextAlignment.CENTER)
                     .setMarginTop(3));
         } catch (Exception ex) {
             log.warn("No se pudo generar el QR del ticket: {}", ex.getMessage());
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // CONTENIDO CORTO DEL QR (respaldo, solo ticket)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * QR corto del ticket individual. Unos 100 caracteres: el QR queda con
+     * pocos módulos grandes y se lee bien en papel térmico (203 dpi), aun
+     * con la impresión un poco gris o corrida. El detalle de servicios ya
+     * está impreso en el mismo ticket.
+     */
+    private String contenidoQrIndividual(Atencion atencion, Voz v) {
+        return String.join("\n",
+                "VOUCHER " + texto(atencion.getNumeroCorrelativo()),
+                v.t("Pasajero: ", "Passenger: ") + nombreConBarra(atencion),
+                v.t("Vuelo: ", "Flight: ") + vueloInfo(atencion),
+                "PNR: " + texto(atencion.getPnr()),
+                textoPie(atencion));
+    }
+
+    /**
+     * QR corto del ticket grupal: cantidad de pasajeros y rango de
+     * correlativos en lugar de la lista de nombres. Su tamaño NO crece con
+     * el número de pasajeros (un PNR compartido puede tener 30 o más).
+     */
+    private String contenidoQrGrupal(List<Atencion> atenciones, Voz v) {
+        Atencion titular = atenciones.get(0);
+        Atencion ultimo = atenciones.get(atenciones.size() - 1);
+        int total = atenciones.size();
+        return String.join("\n",
+                "VOUCHER " + texto(titular.getNumeroCorrelativo()),
+                v.t("Grupal: ", "Group: ") + total + v.t(" pasajeros", " passengers")
+                        + " (" + texto(titular.getNumeroCorrelativo())
+                        + v.t(" a ", " to ") + texto(ultimo.getNumeroCorrelativo()) + ")",
+                v.t("Titular: ", "Lead: ") + nombreConBarra(titular),
+                v.t("Vuelo: ", "Flight: ") + vueloInfo(titular),
+                "PNR: " + texto(titular.getPnr()),
+                textoPie(titular));
     }
 
     /**

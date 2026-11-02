@@ -36,6 +36,7 @@ import com.saasa.contingencias.service.IS3StorageService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import javax.imageio.ImageIO;
 import java.awt.BasicStroke;
@@ -276,25 +277,48 @@ class TicketPdfRendererTest {
     }
 
     @Test
-    @DisplayName("Individual → el QR se lee y tiene el MISMO contenido que se imprime en el ticket")
+    @DisplayName("Individual sin PDF/URL pública → el QR se lee y lleva el texto CORTO de respaldo")
     void renderIndividual_qrLegibleConContenidoDelTicket() throws Exception {
         Vuelo v = vuelo("Plus Ultra");
         Atencion a = atencion(v, 1L, "SGC-LIM-PU-000001", "Ana", "Ruiz");
 
         byte[] pdf = renderer.renderIndividual(a, List.of(hotel(a, v, "SIMPLE", 1)), 80);
 
-        String esperado = "VOUCHER DE SERVICIO SGC-LIM-PU-000001\n"
+        String esperado = "VOUCHER SGC-LIM-PU-000001\n"
                 + "Pasajero: ANA/RUIZ\n"
                 + "Vuelo: PU301/261020\n"
                 + "PNR: ABC123\n"
-                + "Lugar: LIM\n"
-                + "HOTEL: NOVOTEL LIMA\n"
-                + "Check-in: 20/10/2026\n"
-                + "Check-out: 21/10/2026\n"
-                + "Hab.: 1 SIMPLE\n"
-                + "Incluye: 1 desayuno, 1 almuerzo, 1 snack, 1 cena\n"
                 + "Plus Ultra - 20/10/2026";
-        assertEquals(List.of(esperado), qrsDecodificados(pdf), "El QR debe repetir lo impreso en el ticket");
+        assertEquals(List.of(esperado), qrsDecodificados(pdf), "Sin enlace, el QR lleva el texto corto de respaldo");
+        assertTrue(texto(pdf).contains("Escanee para verificar el voucher"));
+    }
+
+    @Test
+    @DisplayName("Individual con PDF y URL pública → el QR lleva el ENLACE CORTO /v/{correlativo}")
+    void renderIndividual_conPdf_qrEsEnlaceCorto() throws Exception {
+        ReflectionTestUtils.setField(renderer, "publicBaseUrl", "https://vouchers.saasa.pe/");
+        Vuelo v = vuelo("Plus Ultra");
+        Atencion a = atencion(v, 1L, "SGC-LIM-PU-000001", "Ana", "Ruiz");
+        a.setPdfUrl("contingencias/vouchers/2026/SGC-LIM-PU-000001.pdf");
+
+        byte[] pdf = renderer.renderIndividual(a, List.of(hotel(a, v, "SIMPLE", 1)), 104);
+
+        assertEquals(List.of("https://vouchers.saasa.pe/v/SGC-LIM-PU-000001"), qrsDecodificados(pdf));
+        assertTrue(texto(pdf).contains("Escanee para ver el voucher completo"));
+    }
+
+    @Test
+    @DisplayName("Individual con URL pública pero SIN PDF generado → QR de texto corto (respaldo)")
+    void renderIndividual_sinPdf_qrTextoCorto() throws Exception {
+        ReflectionTestUtils.setField(renderer, "publicBaseUrl", "https://vouchers.saasa.pe");
+        Vuelo v = vuelo("Plus Ultra");
+        Atencion a = atencion(v, 1L, "SGC-LIM-PU-000001", "Ana", "Ruiz");
+
+        List<String> qrs = qrsDecodificados(renderer.renderIndividual(a, List.of(), 80));
+
+        assertEquals(1, qrs.size());
+        assertTrue(qrs.get(0).startsWith("VOUCHER SGC-LIM-PU-000001\n"), qrs.get(0));
+        assertFalse(qrs.get(0).contains("/v/"), qrs.get(0));
     }
 
     @Test
@@ -462,7 +486,7 @@ class TicketPdfRendererTest {
     }
 
     @Test
-    @DisplayName("Grupal → el QR se lee y tiene el MISMO contenido que se imprime en el ticket")
+    @DisplayName("Grupal sin PDF/URL pública → el QR se lee y lleva el texto CORTO de respaldo")
     void renderGrupal_qrLegibleConContenidoDelTicket() throws Exception {
         Vuelo v = vuelo("Plus Ultra");
         Atencion titular = atencion(v, 1L, "SGC-LIM-PU-000002", "Juan", "Perez");
@@ -472,21 +496,30 @@ class TicketPdfRendererTest {
         byte[] pdf = renderer.renderGrupal(List.of(titular, acomp),
                 Map.of(1L, compartidos, 2L, compartidos), true, 80);
 
-        String esperado = "VOUCHER DE SERVICIO SGC-LIM-PU-000002\n"
-                + "GRUPAL - 2 PASAJEROS\n"
+        String esperado = "VOUCHER SGC-LIM-PU-000002\n"
+                + "Grupal: 2 pasajeros (SGC-LIM-PU-000002 a SGC-LIM-PU-000003)\n"
+                + "Titular: JUAN/PEREZ\n"
                 + "Vuelo: PU301/261020\n"
                 + "PNR: ABC123\n"
-                + "Lugar: LIM\n"
-                + "PASAJEROS (2):\n"
-                + "1. JUAN/PEREZ SGC-LIM-PU-000002\n"
-                + "2. FLOR/VASQUEZ SGC-LIM-PU-000003\n"
-                + "HOTEL: NOVOTEL LIMA\n"
-                + "Check-in: 20/10/2026\n"
-                + "Check-out: 21/10/2026\n"
-                + "Hab.: 1 DOBLE\n"
-                + "Incluye: 1 desayuno, 1 almuerzo, 1 snack, 1 cena\n"
                 + "Plus Ultra - 20/10/2026";
-        assertEquals(List.of(esperado), qrsDecodificados(pdf), "El QR grupal debe repetir lo impreso en el ticket");
+        assertEquals(List.of(esperado), qrsDecodificados(pdf), "Sin enlace, el QR grupal lleva el texto corto de respaldo");
+    }
+
+    @Test
+    @DisplayName("Grupal con PDF y URL pública → el QR lleva el ENLACE CORTO del TITULAR")
+    void renderGrupal_conPdf_qrEsEnlaceDelTitular() throws Exception {
+        ReflectionTestUtils.setField(renderer, "publicBaseUrl", "https://vouchers.saasa.pe");
+        Vuelo v = vuelo("Plus Ultra");
+        Atencion titular = atencion(v, 1L, "SGC-LIM-PU-000002", "Juan", "Perez");
+        Atencion acomp = atencion(v, 2L, "SGC-LIM-PU-000003", "Flor", "Vasquez");
+        titular.setPdfUrl("contingencias/vouchers/2026/GRUPO-SGC-LIM-PU-000002.pdf");
+        acomp.setPdfUrl("contingencias/vouchers/2026/GRUPO-SGC-LIM-PU-000002.pdf");
+        List<ServicioAsignado> compartidos = List.of(hotel(titular, v, "DOBLE", 1));
+
+        byte[] pdf = renderer.renderGrupal(List.of(titular, acomp),
+                Map.of(1L, compartidos, 2L, compartidos), true, 104);
+
+        assertEquals(List.of("https://vouchers.saasa.pe/v/SGC-LIM-PU-000002"), qrsDecodificados(pdf));
     }
 
     @Test
@@ -503,8 +536,9 @@ class TicketPdfRendererTest {
         List<String> qrs = qrsDecodificados(pdf);
         assertEquals(1, qrs.size());
         String qr = qrs.get(0);
-        assertTrue(qr.contains("2. FABIOLA/RODRIGUEZ ESPINOZA SGC-LIM-PU-000003"), qr);
-        assertTrue(qr.contains("RESTAURANTE: LA ROSA NAUTICA RESTAURANT\nPax: 2\nIncluye: 2 desayunos"), qr);
+        assertTrue(qr.contains("Titular: JOHNNY MR/ACERO"), qr);
+        assertTrue(qr.contains("Grupal: 2 pasajeros (SGC-LIM-PU-000002 a SGC-LIM-PU-000003)"), qr);
+        assertFalse(qr.contains("RESTAURANTE"), "El QR corto no repite los servicios: ya van impresos en el ticket");
         assertFalse(qr.contains("cubiertos"), "El ticket no imprime 'cubiertos', el QR tampoco");
         assertTrue(qr.chars().allMatch(c -> c == '\n' || (c >= 0x20 && c <= 0x7E)), "El QR debe ir en ASCII");
 
@@ -571,27 +605,14 @@ class TicketPdfRendererTest {
         }
         assertTrue(texto(pdf).contains("6 PASAJEROS"));
 
-        StringBuilder esperado = new StringBuilder("VOUCHER DE SERVICIO SGC-LIM-PU-000001\n"
-                + "GRUPAL - 6 PASAJEROS\n"
+        String esperado = "VOUCHER SGC-LIM-PU-000001\n"
+                + "Grupal: 6 pasajeros (SGC-LIM-PU-000001 a SGC-LIM-PU-000006)\n"
+                + "Titular: PASAJERO1/APELLIDO1\n"
                 + "Vuelo: PU301/261020\n"
                 + "PNR: ABC123\n"
-                + "Lugar: LIM\n"
-                + "PASAJEROS (6):\n");
-        for (int i = 1; i <= 6; i++) {
-            esperado.append(i).append(". PASAJERO").append(i).append("/APELLIDO").append(i)
-                    .append(String.format(" SGC-LIM-PU-%06d", i)).append("\n");
-        }
-        esperado.append("HOTEL: NOVOTEL LIMA\n"
-                + "Check-in: 20/10/2026\n"
-                + "Check-out: 21/10/2026\n"
-                + "Hab.: 3 DOBLE\n"
-                + "Incluye: 3 desayunos, 3 almuerzos, 3 snacks, 3 cenas\n"
-                + "TRANSPORTE: LIMA AIRPORT TRANSFER VIP\n"
-                + "Pasajeros: 6\n"
-                + "Tipo: AEROPUERTO - DOMICILIO Y DOMICILIO - AEROPUERTO\n"
-                + "Plus Ultra - 20/10/2026");
-        assertEquals(List.of(esperado.toString()), qrsDecodificados(pdf),
-                "Con 6 pasajeros el QR debe generarse y repetir lo impreso en el ticket");
+                + "Plus Ultra - 20/10/2026";
+        assertEquals(List.of(esperado), qrsDecodificados(pdf),
+                "Con 6 pasajeros el QR debe generarse con el texto corto de respaldo");
     }
 
     @Test
@@ -621,7 +642,7 @@ class TicketPdfRendererTest {
     // ══════════════════════════════════════════════════════════════════════
 
     @Test
-    @DisplayName("Grupal de 10 pasajeros (límite) → el QR todavía lleva la lista completa de nombres")
+    @DisplayName("Grupal de 10 pasajeros → QR corto con cantidad y rango de correlativos (sin lista de nombres)")
     void renderGrupal_diezPasajeros_qrConListaCompleta() throws Exception {
         Vuelo v = vuelo("Plus Ultra");
         List<Atencion> grupo = grupo(v, VoucherQr.MAX_PASAJEROS_QR_DETALLE);
@@ -633,9 +654,9 @@ class TicketPdfRendererTest {
 
         assertEquals(1, qrs.size());
         String qr = qrs.get(0);
-        assertTrue(qr.contains("PASAJEROS (10):"), qr);
-        assertTrue(qr.contains("1. PASAJERO1/APELLIDO1 SGC-LIM-PU-000001"), qr);
-        assertTrue(qr.contains("10. PASAJERO10/APELLIDO10 SGC-LIM-PU-000010"), qr);
+        assertTrue(qr.contains("Grupal: 10 pasajeros (SGC-LIM-PU-000001 a SGC-LIM-PU-000010)"), qr);
+        assertTrue(qr.contains("Titular: PASAJERO1/APELLIDO1"), qr);
+        assertFalse(qr.contains("PASAJERO10/APELLIDO10"), "El QR corto no lleva la lista de nombres");
     }
 
     @Test
@@ -663,20 +684,11 @@ class TicketPdfRendererTest {
         assertTrue(texto.contains("PASAJERO30/APELLIDO30"));
         assertTrue(texto.contains("SGC-LIM-PU-000030"));
 
-        String esperado = "VOUCHER DE SERVICIO SGC-LIM-PU-000001\n"
-                + "GRUPAL - 30 PASAJEROS\n"
+        String esperado = "VOUCHER SGC-LIM-PU-000001\n"
+                + "Grupal: 30 pasajeros (SGC-LIM-PU-000001 a SGC-LIM-PU-000030)\n"
+                + "Titular: PASAJERO1/APELLIDO1\n"
                 + "Vuelo: PU301/261020\n"
                 + "PNR: ABC123\n"
-                + "Lugar: LIM\n"
-                + "PASAJEROS: 30 (SGC-LIM-PU-000001 a SGC-LIM-PU-000030)\n"
-                + "HOTEL: NOVOTEL LIMA\n"
-                + "Check-in: 20/10/2026\n"
-                + "Check-out: 21/10/2026\n"
-                + "Hab.: 15 DOBLE\n"
-                + "Incluye: 15 desayunos, 15 almuerzos, 15 snacks, 15 cenas\n"
-                + "TRANSPORTE: LIMA AIRPORT TRANSFER VIP\n"
-                + "Pasajeros: 30\n"
-                + "Tipo: AEROPUERTO - DOMICILIO Y DOMICILIO - AEROPUERTO\n"
                 + "Plus Ultra - 20/10/2026";
         assertEquals(List.of(esperado), qrsDecodificados(pdf),
                 "Con 30 pasajeros el QR va resumido: sin la lista de nombres, con el rango de correlativos");
@@ -701,8 +713,7 @@ class TicketPdfRendererTest {
         List<String> qrs = qrsDecodificados(pdf);
         assertEquals(1, qrs.size(), "Debe haber exactamente un QR legible");
         String qr = qrs.get(0);
-        assertTrue(qr.contains("PASAJEROS: 30 (SGC-LIM-PU-000001 a SGC-LIM-PU-000030)"), qr);
-        assertTrue(qr.contains("Servicios por pasajero: ver voucher impreso"), qr);
+        assertTrue(qr.contains("Grupal: 30 pasajeros (SGC-LIM-PU-000001 a SGC-LIM-PU-000030)"), qr);
         assertFalse(qr.contains("PASAJERO 1/30"), "El QR no repite la sección de cada pasajero");
         assertFalse(qr.contains("HOTEL:"), "El QR no repite los servicios de cada pasajero");
     }

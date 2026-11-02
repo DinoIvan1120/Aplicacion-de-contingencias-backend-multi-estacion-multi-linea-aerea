@@ -752,8 +752,8 @@ class PdfGeneratorServiceImplTest {
     }
 
     @Test
-    @DisplayName("QR A4 individual → se lee y es IDÉNTICO al QR del ticket térmico de la misma atención")
-    void generarVoucher_qrIgualAlDelTicket() throws Exception {
+    @DisplayName("QR A4 individual → se lee, conserva el contenido COMPLETO y es distinto del QR corto del ticket")
+    void generarVoucher_qrCompletoDistintoAlDelTicket() throws Exception {
         Vuelo v = vuelo("Plus Ultra");
         Atencion a = atencion(v, LocalDate.of(2026, 7, 20));
         List<ServicioAsignado> servicios = List.of(hotelConComidas(a, v, "DOBLE", 1));
@@ -763,7 +763,8 @@ class PdfGeneratorServiceImplTest {
         List<String> qrTicket = qrsDecodificados(ticket.renderIndividual(a, servicios, 104));
 
         assertEquals(1, qrA4.size(), "El A4 debe tener exactamente un QR legible");
-        assertEquals(qrTicket, qrA4, "El A4 y el ticket deben llevar el mismo QR");
+        assertNotEquals(qrTicket, qrA4,
+                "El ticket térmico lleva un QR corto propio; el A4 conserva el QR completo");
 
         String esperado = "VOUCHER DE SERVICIO SGC-000001000\n"
                 + "Pasajero: ANA/RUIZ\n"
@@ -780,8 +781,8 @@ class PdfGeneratorServiceImplTest {
     }
 
     @Test
-    @DisplayName("QR A4 grupal con tildes y restaurante → ASCII, 'Pax/Incluye' (no 'cubiertos') e igual al del ticket")
-    void generarVoucherGrupal_qrAsciiSinCubiertosIgualAlTicket() throws Exception {
+    @DisplayName("QR A4 grupal con tildes y restaurante → ASCII, 'Pax/Incluye' (no 'cubiertos') y completo (distinto del ticket)")
+    void generarVoucherGrupal_qrAsciiSinCubiertosCompleto() throws Exception {
         Vuelo v = vuelo("Plus Ultra");
         Atencion titular = atencionGrupo(v, 1L, "SGC-000000001", "Johnny MR", "Acero");
         Atencion acomp = atencionGrupo(v, 2L, "SGC-000000002", "Fabiola", "Rodríguez Espinoza");
@@ -793,7 +794,8 @@ class PdfGeneratorServiceImplTest {
         List<String> qrTicket = qrsDecodificados(ticket.renderGrupal(List.of(titular, acomp), mapa, true, 104));
 
         assertEquals(1, qrA4.size());
-        assertEquals(qrTicket, qrA4, "El A4 grupal y el ticket grupal deben llevar el mismo QR");
+        assertNotEquals(qrTicket, qrA4,
+                "El ticket grupal lleva un QR corto propio; el A4 grupal conserva el QR completo");
         String qr = qrA4.get(0);
         assertTrue(qr.contains("2. FABIOLA/RODRIGUEZ ESPINOZA SGC-000000002"), qr);
         assertTrue(qr.contains("RESTAURANTE: LA ROSA NAUTICA RESTAURANT\nPax: 2\nIncluye: 2 desayunos"), qr);
