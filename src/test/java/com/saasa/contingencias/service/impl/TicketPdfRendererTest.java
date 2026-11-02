@@ -294,7 +294,7 @@ class TicketPdfRendererTest {
     }
 
     @Test
-    @DisplayName("Individual con PDF y URL pública → el QR lleva el ENLACE CORTO /v/{correlativo}")
+    @DisplayName("Individual con PDF y URL pública → el QR lleva el enlace a la página /v/{correlativo}/ver")
     void renderIndividual_conPdf_qrEsEnlaceCorto() throws Exception {
         ReflectionTestUtils.setField(renderer, "publicBaseUrl", "https://vouchers.saasa.pe/");
         Vuelo v = vuelo("Plus Ultra");
@@ -303,7 +303,7 @@ class TicketPdfRendererTest {
 
         byte[] pdf = renderer.renderIndividual(a, List.of(hotel(a, v, "SIMPLE", 1)), 104);
 
-        assertEquals(List.of("https://vouchers.saasa.pe/v/SGC-LIM-PU-000001"), qrsDecodificados(pdf));
+        assertEquals(List.of("https://vouchers.saasa.pe/v/SGC-LIM-PU-000001/ver"), qrsDecodificados(pdf));
         assertTrue(texto(pdf).contains("Escanee para ver el voucher completo"));
     }
 
@@ -319,6 +319,19 @@ class TicketPdfRendererTest {
         assertEquals(1, qrs.size());
         assertTrue(qrs.get(0).startsWith("VOUCHER SGC-LIM-PU-000001\n"), qrs.get(0));
         assertFalse(qrs.get(0).contains("/v/"), qrs.get(0));
+    }
+
+    @Test
+    @DisplayName("URL pública sin https:// → el QR agrega el esquema para que se lea como enlace")
+    void renderIndividual_baseSinEsquema_agregaHttps() throws Exception {
+        ReflectionTestUtils.setField(renderer, "publicBaseUrl", "api.saasa-apps-contingencias.com");
+        Vuelo v = vuelo("LATAM");
+        Atencion a = atencion(v, 1L, "SGC-LIM-LA-000002", "Johnny MR", "Acero");
+        a.setPdfUrl("contingencias/vouchers/2026/SGC-LIM-LA-000002.pdf");
+
+        List<String> qrs = qrsDecodificados(renderer.renderIndividual(a, List.of(), 104));
+
+        assertEquals(List.of("https://api.saasa-apps-contingencias.com/v/SGC-LIM-LA-000002/ver"), qrs);
     }
 
     @Test
@@ -519,7 +532,7 @@ class TicketPdfRendererTest {
         byte[] pdf = renderer.renderGrupal(List.of(titular, acomp),
                 Map.of(1L, compartidos, 2L, compartidos), true, 104);
 
-        assertEquals(List.of("https://vouchers.saasa.pe/v/SGC-LIM-PU-000002"), qrsDecodificados(pdf));
+        assertEquals(List.of("https://vouchers.saasa.pe/v/SGC-LIM-PU-000002/ver"), qrsDecodificados(pdf));
     }
 
     @Test

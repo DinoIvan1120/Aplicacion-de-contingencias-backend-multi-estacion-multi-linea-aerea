@@ -53,8 +53,9 @@ import java.util.Map;
  *  - logo dinámico de la aerolínea (LineaAerea.logoKey en S3, respaldo
  *    estático para Plus Ultra), aquí convertido a escala de grises;
  *  - idioma ES/EN según Atencion.idiomaVoucher (en grupal, el del titular);
- *  - QR del ticket = ENLACE CORTO del voucher ({app.public-base-url}/v/
- *    {correlativo}), el mismo que se envía por WhatsApp. Al escanearlo se
+ *  - QR del ticket = ENLACE a la página del voucher ({app.public-base-url}/v/
+ *    {correlativo}/ver). Es una página HTML liviana que se ve en cualquier
+ *    navegador (también en los internos de los lectores de QR) y desde ahí
  *    abre el PDF A4 completo y vigente (VoucherRedirectController). Si la
  *    atención aún no tiene PDF, el QR lleva un texto corto con los datos
  *    clave. En papel térmico un QR con el voucher completo queda tan denso
@@ -351,15 +352,17 @@ public class TicketPdfRenderer {
         }
     }
 
-    /** {app.public-base-url}/v/{correlativo}, o null si no se puede armar. */
+    /** https://{app.public-base-url}/v/{correlativo}/ver, o null si no se puede armar. */
     private String enlaceVoucher(Atencion atencion) {
         if (publicBaseUrl == null || publicBaseUrl.isBlank()) return null;
         if (atencion.getPdfUrl() == null || atencion.getPdfUrl().isBlank()) return null;
         String correlativo = atencion.getNumeroCorrelativo();
         if (correlativo == null || correlativo.isBlank()) return null;
         String base = publicBaseUrl.trim();
+        // Sin esquema, los lectores de QR lo toman como texto y no como enlace.
+        if (!base.startsWith("http://") && !base.startsWith("https://")) base = "https://" + base;
         if (base.endsWith("/")) base = base.substring(0, base.length() - 1);
-        return base + "/v/" + correlativo.trim();
+        return base + "/v/" + correlativo.trim() + "/ver";
     }
 
     private void qr(Ticket t, String contenido, String leyenda) {

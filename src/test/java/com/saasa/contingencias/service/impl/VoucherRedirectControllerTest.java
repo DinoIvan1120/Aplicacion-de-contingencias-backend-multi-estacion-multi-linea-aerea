@@ -18,6 +18,8 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.Optional;
 
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -75,6 +77,98 @@ class VoucherRedirectControllerTest {
 
         mockMvc.perform(get("/v/SGC-000000237"))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void paginaVoucher_correlativoValido_devuelveHtmlConVisorYBotones() throws Exception {
+        Atencion a = atencionConPdf();
+        a.setNombre("Johnny MR");
+        a.setApellido("Acero");
+        a.setPnr("EJVRJR");
+        when(atencionRepository.findByNumeroCorrelativo("SGC-LIM-LA-000002"))
+                .thenReturn(Optional.of(a));
+
+        mockMvc.perform(get("/v/SGC-LIM-LA-000002/ver"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith("text/html"))
+                .andExpect(content().string(containsString("SGC-LIM-LA-000002")))
+                .andExpect(content().string(containsString("Johnny MR Acero")))
+                .andExpect(content().string(containsString("PNR: EJVRJR")))
+                .andExpect(content().string(containsString("var urlPdf = '/v/SGC-LIM-LA-000002/pdf'")))
+                .andExpect(content().string(containsString("pdf.min.js")))
+                .andExpect(content().string(containsString("href=\"/v/SGC-LIM-LA-000002/pdf?descargar=true\"")))
+                .andExpect(content().string(containsString("package=com.android.chrome")));
+    }
+
+    @Test
+    void paginaVoucher_escapaHtml() throws Exception {
+        Atencion a = atencionConPdf();
+        a.setNombre("<script>");
+        a.setApellido("X");
+        when(atencionRepository.findByNumeroCorrelativo("SGC-000000236"))
+                .thenReturn(Optional.of(a));
+
+        mockMvc.perform(get("/v/SGC-000000236/ver"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(not(containsString("Pasajero: <script>"))))
+                .andExpect(content().string(containsString("&lt;script&gt;")));
+    }
+
+    @Test
+    void paginaVoucher_sinPdf_retorna404() throws Exception {
+        Atencion sinPdf = new Atencion();
+        when(atencionRepository.findByNumeroCorrelativo("SGC-000000237"))
+                .thenReturn(Optional.of(sinPdf));
+
+        mockMvc.perform(get("/v/SGC-000000237/ver"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void pdfVoucher_sirvePdfInline() throws Exception {
+        byte[] pdf = "%PDF-1.4 prueba".getBytes();
+        when(atencionRepository.findByNumeroCorrelativo("SGC-000000236"))
+                .thenReturn(Optional.of(atencionConPdf()));
+        when(s3StorageService.descargarPdf("prd/vouchers/2026/SGC-000000236.pdf")).thenReturn(pdf);
+
+        mockMvc.perform(get("/v/SGC-000000236/pdf"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType("application/pdf"))
+                .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, containsString("inline")))
+                .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, containsString("SGC-000000236.pdf")))
+                .andExpect(content().bytes(pdf));
+    }
+
+    @Test
+    void pdfVoucher_descargar_enviaComoAdjunto() throws Exception {
+        when(atencionRepository.findByNumeroCorrelativo("SGC-000000236"))
+                .thenReturn(Optional.of(atencionConPdf()));
+        when(s3StorageService.descargarPdf("prd/vouchers/2026/SGC-000000236.pdf"))
+                .thenReturn("%PDF-1.4".getBytes());
+
+        mockMvc.perform(get("/v/SGC-000000236/pdf").param("descargar", "true"))
+                .andExpect(status().isOk())
+                .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, containsString("attachment")));
+    }
+
+    @Test
+    void pdfVoucher_sinPdf_retorna404() throws Exception {
+        when(atencionRepository.findByNumeroCorrelativo("SGC-000000999"))
+                .thenReturn(Optional.empty());
+
+        mockMvc.perform(get("/v/SGC-000000999/pdf"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void pdfVoucher_errorS3_retorna500() throws Exception {
+        when(atencionRepository.findByNumeroCorrelativo("SGC-000000236"))
+                .thenReturn(Optional.of(atencionConPdf()));
+        when(s3StorageService.descargarPdf("prd/vouchers/2026/SGC-000000236.pdf"))
+                .thenThrow(new RuntimeException("S3 caído"));
+
+        mockMvc.perform(get("/v/SGC-000000236/pdf"))
+                .andExpect(status().isInternalServerError());
     }
 
     @Test
