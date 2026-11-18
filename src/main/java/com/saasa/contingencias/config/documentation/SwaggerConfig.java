@@ -16,7 +16,7 @@ public class SwaggerConfig {
                         //.description("QAS"))
             .info(new Info()
                 .title("SAASA – Proyecto de gestión de contingencias - Dino Iván Pérez Vásquez")
-                .description("API REST para gestión operativa de pasajeros afectados por contingencias aéreas")
+                .description("API REST para gestión operativa de pasajeros afectados por contingencias")
                 .version("v1.0")
                 .contact(new Contact().name("Dino Iván Pérez Vásquez"))
             )
